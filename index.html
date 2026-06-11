@@ -89,6 +89,7 @@ video,#overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:cover
 .chip.good{background:rgba(61,220,132,.15);color:var(--good)}
 .chip.warn{background:rgba(255,179,71,.15);color:var(--warn)}
 .chip.bad{background:rgba(255,92,122,.15);color:var(--bad)}
+.chip.info{background:rgba(77,163,255,.15);color:var(--accent)}
 .crow{display:grid;grid-template-columns:118px 1fr auto;gap:8px;align-items:center;font-size:11.5px;margin:4px 0;color:#c9d4ec}
 .crow .ct{height:7px;background:#0b101e;border-radius:4px;overflow:hidden}
 .crow .cf{height:100%;background:linear-gradient(90deg,var(--good),var(--warn) 55%,var(--bad))}
@@ -161,7 +162,7 @@ footer{position:fixed;bottom:0;left:0;right:0;background:rgba(13,18,32,.95);bord
     <button class="btn primary" id="btnCam">▶ Start Camera</button>
     <button class="btn" id="btnFlip" disabled>🔄 Flip</button>
     <button class="btn" id="btnMic">🎙 Mic Off</button>
-    <button class="btn" id="btnBase" disabled>📊 Capture Baseline (30s)</button>
+    <button class="btn" id="btnBase" disabled>📊 Guided Baseline</button>
   </div>
 
   <div class="card">
@@ -391,7 +392,7 @@ function computeEmotions(b){
 const blinkTimes=[]; let blinkClosed=false;
 const gazeSamples=[];           // {t, off}
 let lipEMA=0;
-let baseline=null, baselining=false, baseStart=0, baseAcc=null;
+let baseline=null;
 const flashState={};            // per-emotion onset tracking
 EMOTIONS.forEach(e=>flashState[e.key]={active:false,onset:0,peak:0,img:null});
 let flashes=[];
@@ -598,7 +599,7 @@ function finishQuestion(){            // ends whichever capture window is runnin
   qmode.active=false; clearInterval(qTimer); qTimer=null;
   const f=computeFeatures();
   if(mode==='question') scoreQuestion(f);
-  else calAdvance(f);
+  else wizAdvance(f);
 }
 
 function genericCues(f){
@@ -673,7 +674,7 @@ function scoreQuestion(f){
   renderQResults();
 }
 
-/* ---- guided truth/lie calibration ---- */
+/* ---- guided wizards: baseline & truth/lie calibration ---- */
 const CAL_STEPS=[
  {type:'rest', tag:'REST', text:'Have them relax and look at the camera, breathing normally. This captures their resting baseline.', dur:15000},
  {type:'truth',tag:'TRUTH',text:'Ask: “Describe exactly what you’re wearing right now.” They must answer 100% truthfully.'},
@@ -683,26 +684,53 @@ const CAL_STEPS=[
  {type:'lie',  tag:'LIE',  text:'Ask: “Tell me about the trip you took last month.” They must invent it completely and sell it.'},
  {type:'lie',  tag:'LIE',  text:'Ask: “What did you eat this morning?” Completely made-up answer, as convincing as they can.'},
 ];
-let calRun=null;
-$('btnCal').onclick=()=>calRun?calCancel():calStart();
+// neutral talking prompts — 3 picked at random per baseline run, so the baseline
+// captures how this person blinks/looks/sounds while comfortably telling the truth
+const BASE_POOL=[
+ 'Ask: “What’s your usual morning routine?”',
+ 'Ask: “Describe this room — what do you see around you?”',
+ 'Direction: Have them count out loud backward from 30 to 10 at a steady pace.',
+ 'Ask: “What did you watch or listen to recently? What was it about?”',
+ 'Ask: “Walk me through how you make your favorite meal.”',
+ 'Direction: Have them name the months of the year out loud, then the days of the week.',
+ 'Ask: “What’s the weather been like this week?”',
+ 'Ask: “Tell me about a hobby of yours — how does it work?”',
+ 'Direction: Have them read anything nearby out loud (a label, a sign, a book spine).',
+ 'Ask: “Where would you like to travel someday, and why?”',
+];
+let wizRun=null;   // {kind:'base'|'cal', i, steps, truth:[], lie:[], feats:[]}
+
+$('btnCal').onclick=()=>{ if(wizRun){ if(wizRun.kind==='cal') wizCancel(); } else calStart(); };
+$('btnBase').onclick=()=>{ if(wizRun){ if(wizRun.kind==='base') wizCancel(); } else baseStart(); };
+
 function calStart(){
-  calRun={i:0,truth:[],lie:[]};
+  wizRun={kind:'cal',i:0,steps:CAL_STEPS,truth:[],lie:[]};
   $('btnCal').textContent='✖ Cancel calibration';
-  $('calWiz').style.display='block'; $('qResults').style.display='none';
-  calShowStep();
+  wizOpen();
 }
-function calShowStep(){
-  const st=CAL_STEPS[calRun.i];
+function baseStart(){
+  const picks=[...BASE_POOL].sort(()=>Math.random()-0.5).slice(0,3)
+    .map(t=>({type:'talk',tag:'TALK',text:t}));
+  wizRun={kind:'base',i:0,feats:[],steps:[
+    {type:'rest',tag:'REST',text:'Have them relax and look at the camera, breathing normally.',dur:12000},
+    ...picks]};
+  $('btnBase').textContent='✖ Cancel baseline';
+  wizOpen();
+}
+function wizOpen(){ $('calWiz').style.display='block'; $('qResults').style.display='none'; wizShowStep(); }
+function wizShowStep(){
+  const st=wizRun.steps[wizRun.i];
   $('calTag').textContent=st.tag;
-  $('calTag').className='chip '+(st.type==='lie'?'bad':st.type==='truth'?'good':'warn');
+  $('calTag').className='chip '+(st.type==='lie'?'bad':st.type==='truth'?'good':st.type==='talk'?'info':'warn');
   $('calText').textContent=st.text;
-  $('calProg').textContent=`Step ${calRun.i+1} of ${CAL_STEPS.length}`;
-  $('btnCalGo').textContent=st.type==='rest'?'▶ Begin 15s rest capture':'▶ Start their answer';
+  $('calProg').textContent=`Step ${wizRun.i+1} of ${wizRun.steps.length}`;
+  $('btnCalGo').textContent=st.type==='rest'?'▶ Begin rest capture':'▶ Start their answer';
 }
 $('btnCalGo').onclick=()=>{
   if(qmode.active){ finishQuestion(); return; }       // tap again = stop early
-  const st=CAL_STEPS[calRun.i];
-  startWindow('cal-'+st.type);
+  if(!wizRun) return;
+  const st=wizRun.steps[wizRun.i];
+  startWindow('wiz');
   const dur=st.dur||QWIN;
   qTimer=setInterval(()=>{
     const left=Math.ceil((dur-(performance.now()-qmode.start))/1000);
@@ -710,35 +738,55 @@ $('btnCalGo').onclick=()=>{
     else $('btnCalGo').textContent=`⏺ ${left}s — tap to stop early`;
   },250);
 };
-function calAdvance(f){
-  if(!calRun) return;
-  const st=CAL_STEPS[calRun.i];
-  if(st.type==='rest')
-    baseline={blink:Math.max(2,f.blink),gaze:Math.round(f.gaze),lip:f.lip,pitch:f.pitch||0,asym:f.asym};
-  else calRun[st.type].push(f);
+function wizAdvance(f){
+  if(!wizRun) return;
+  const st=wizRun.steps[wizRun.i];
+  if(wizRun.kind==='cal'){
+    if(st.type==='rest') setBaselineFrom([f]);
+    else wizRun[st.type].push(f);
+  }else wizRun.feats.push(f);
   beep('tick');
-  calRun.i++;
-  if(calRun.i>=CAL_STEPS.length) calFinish();
-  else calShowStep();
+  wizRun.i++;
+  if(wizRun.i>=wizRun.steps.length){ wizRun.kind==='cal'?calFinish():baseFinish(); }
+  else wizShowStep();
+}
+function setBaselineFrom(fs){
+  const m=k=>{const a=fs.map(x=>x[k]).filter(v=>v!==null&&v!==undefined);return a.length?avgA(a):null;};
+  baseline={blink:Math.max(2,Math.round(m('blink')||0)),gaze:Math.round(m('gaze')||0),
+    lip:m('lip')||0,pitch:m('pitch')||0,asym:m('asym')};
+  try{localStorage.setItem('cuesightBase',JSON.stringify(baseline));}catch(e){}
 }
 function calFinish(){
-  calib={baseline,truth:calRun.truth,lie:calRun.lie,t:Date.now()};
+  calib={baseline,truth:wizRun.truth,lie:wizRun.lie,t:Date.now()};
   try{localStorage.setItem('cuesightCalib',JSON.stringify(calib));}catch(e){}
-  calRun=null;
-  $('calWiz').style.display='none'; $('qResults').style.display='';
+  wizClose();
   $('btnCal').textContent='✓ Re-calibrate';
   $('baseHint').textContent='calibrated — personal truth/lie profile saved';
   beep('good');
 }
-function calCancel(){
-  if(qmode.active){ qmode.active=false; clearInterval(qTimer); qTimer=null; }
-  calRun=null;
-  $('calWiz').style.display='none'; $('qResults').style.display='';
-  $('btnCal').textContent=calib?'✓ Re-calibrate':'🎯 Calibrate truth/lie profile';
+function baseFinish(){
+  setBaselineFrom(wizRun.feats);   // rest + 3 talking windows, pooled
+  if(calib){ calib.baseline=baseline; try{localStorage.setItem('cuesightCalib',JSON.stringify(calib));}catch(e){} }
+  wizClose();
+  $('btnBase').textContent='✓ Re-baseline';
+  $('baseHint').textContent=`baseline: ${baseline.blink} bpm · gaze ${baseline.gaze}% · pitch ${baseline.pitch?Math.round(baseline.pitch)+' Hz':'n/a'}`;
+  beep('good');
 }
+function wizClose(){ wizRun=null; $('calWiz').style.display='none'; $('qResults').style.display=''; }
+function wizCancel(){
+  if(qmode.active){ qmode.active=false; clearInterval(qTimer); qTimer=null; }
+  wizClose();
+  $('btnCal').textContent=calib?'✓ Re-calibrate':'🎯 Calibrate truth/lie profile';
+  $('btnBase').textContent=baseline?'✓ Re-baseline':'📊 Guided Baseline';
+}
+/* restore saved state */
+try{ if(!baseline){ const b=JSON.parse(localStorage.getItem('cuesightBase')||'null'); if(b) baseline=b; } }catch(e){}
 if(calib){
   $('btnCal').textContent='✓ Re-calibrate';
   $('baseHint').textContent='calibrated — personal truth/lie profile loaded';
+}else if(baseline){
+  $('btnBase').textContent='✓ Re-baseline';
+  $('baseHint').textContent='baseline loaded from last session';
 }
 
 function renderQResults(){
@@ -814,7 +862,7 @@ async function startCamera(){
 function stopCamera(){
   running=false;
   clearInterval(watchdog);
-  if(calRun) calCancel();
+  if(wizRun) wizCancel();
   else if(qmode.active && qmode.mode==='question') finishQuestion();
   if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
   $('btnCam').textContent='▶ Start Camera'; $('btnCam').classList.add('primary');
@@ -854,7 +902,6 @@ function loop(){
           const now=performance.now();
           for(const e of EMOTIONS) smooth[e.key]=smooth[e.key]*0.7+raw[e.key]*0.3;
           trackCues(raw,b,now);
-          if(baselining) accumulateBaseline(b,raw,now);
           if(qmode.active) qmodeSample(raw,b,now);
           updateUI(raw,b);
         }
@@ -906,37 +953,7 @@ function setCue(id,val,alert){
   const el=$(id); el.querySelector('.v').textContent=val; el.classList.toggle('alert',!!alert);
 }
 
-/* ================== BASELINE ================== */
-$('btnBase').onclick=()=>{
-  if(baselining) return;
-  baselining=true; baseStart=performance.now();
-  baseAcc={blinks:0,gazeOff:0,gazeN:0,lip:0,lipN:0,pitch:[],blinkMark:blinkTimes.length};
-  $('btnBase').classList.add('rec');
-  const tick=setInterval(()=>{
-    const left=30-Math.floor((performance.now()-baseStart)/1000);
-    $('btnBase').textContent=`⏺ Baseline… ${left}s`;
-    if(left<=0){
-      clearInterval(tick); baselining=false;
-      baseline={
-        blink:Math.max(2,(blinkTimes.length-baseAcc.blinkMark)*2),  // per min
-        gaze:baseAcc.gazeN?Math.round(100*baseAcc.gazeOff/baseAcc.gazeN):0,
-        lip:baseAcc.lipN?baseAcc.lip/baseAcc.lipN:0,
-        pitch:median(baseAcc.pitch)||0,
-      };
-      $('btnBase').classList.remove('rec');
-      $('btnBase').textContent='✓ Re-capture Baseline';
-      $('baseHint').textContent=`baseline: ${baseline.blink} bpm · gaze ${baseline.gaze}% · pitch ${baseline.pitch?Math.round(baseline.pitch)+'Hz':'n/a'}`;
-    }
-  },1000);
-};
-function accumulateBaseline(b,raw,now){
-  const A=(...n)=>n.reduce((s,k)=>s+(b[k]||0),0)/n.length;
-  const off=Math.max(A('eyeLookUpLeft','eyeLookUpRight'),A('eyeLookDownLeft','eyeLookDownRight'),
-                     A('eyeLookOutLeft','eyeLookInRight'),A('eyeLookInLeft','eyeLookOutRight'));
-  baseAcc.gazeN++; if(off>0.45)baseAcc.gazeOff++;
-  baseAcc.lip+=Math.max(raw._press,raw._roll); baseAcc.lipN++;
-  if(voice.pitch>0) baseAcc.pitch.push(voice.pitch);
-}
+/* ================== BASELINE (set via guided wizard below) ================== */
 function updateDeviation(bpm,gp){
   if(!baseline){$('devFill').style.width='0%';$('devVal').textContent='capture a baseline first';return;}
   const C=v=>Math.max(0,Math.min(1,v));

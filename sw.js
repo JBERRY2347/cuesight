@@ -1,5 +1,5 @@
 /* CueSight service worker — caches the app shell and the ML model/wasm at runtime */
-const CACHE = 'cuesight-v3';
+const CACHE = 'cuesight-v4';
 const SHELL = ['./index.html', './manifest.json'];
 
 self.addEventListener('install', e => {
