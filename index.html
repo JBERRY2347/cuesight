@@ -170,7 +170,19 @@ footer{position:fixed;bottom:0;left:0;right:0;background:rgba(13,18,32,.95);bord
       <input id="qLabel" type="text" maxlength="80" placeholder="Question label (optional) — e.g. “Where were you Friday?”">
       <button class="btn primary" id="btnAsk" disabled>❓ Ask</button>
     </div>
-    <div id="qResults"><div class="empty">Capture a baseline and turn the mic on, then tap <b>Ask</b> the moment you finish asking your question. CueSight scores the 12-second reaction window: micro-expression leaks, blink/gaze/lip changes vs. baseline, response latency, pitch and hesitation.</div></div>
+    <div class="qRow">
+      <button class="btn" id="btnCal" disabled>🎯 Calibrate truth/lie profile</button>
+      <button class="btn on" id="btnSound">🔊 Sound On</button>
+    </div>
+    <div id="calWiz" style="display:none;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span class="chip warn" id="calTag">REST</span>
+        <span style="font-size:11px;color:var(--dim)" id="calProg"></span>
+      </div>
+      <div id="calText" style="font-size:14px;line-height:1.5;margin-bottom:12px"></div>
+      <button class="btn primary" id="btnCalGo">▶ Begin</button>
+    </div>
+    <div id="qResults"><div class="empty">Best results: run <b>🎯 Calibrate</b> first — it captures this person's own truth pattern and lie pattern using guided practice questions, then real questions are scored against <i>their</i> profiles instead of generic thresholds. Then tap <b>Ask</b> the moment you finish asking your question.</div></div>
   </div>
 
   <div class="card">
@@ -256,6 +268,19 @@ footer{position:fixed;bottom:0;left:0;right:0;background:rgba(13,18,32,.95);bord
         <li><b>Content over body:</b> real memories carry more sensory detail and complications; fabricated stories are smoother, shorter and stay inconsistent across retellings.</li>
         <li><b>Weak real correlates:</b> fewer details, vocal tension/raised pitch, lip pressing, fewer genuine smiles, fewer illustrative hand gestures, dilated pupils.</li>
       </ul>
+    </div>
+  </details>
+
+  <details>
+    <summary>🔬 The fear-leak research CueSight uses (Shen et al., 2021)<span class="chev">›</span></summary>
+    <div class="dbody">
+      <p>A Frontiers in Psychology study analyzed real high-stakes game-show footage with computer vision, using only the facial muscle movements of <b>fear</b> (Action Units 1, 2, 4, 5, 7, 20, 26). Question Mode now implements its three findings:</p>
+      <ul>
+        <li><b>Fear leaks discriminate:</b> machine-learning classifiers reached 85–90% accuracy on high-stakes clips from fear AUs alone.</li>
+        <li><b>AU20 (horizontal lip stretch) is the hot spot:</b> when lying it was <i>weaker and more fleeting</i> — median 267 ms vs 400 ms when truthful — because liars actively choke it off. CueSight times every AU20 burst and scores "fleetingness."</li>
+        <li><b>Left/right asymmetry:</b> facial movements desynchronize when lying (coherence 0.71 vs 0.81). CueSight correlates your left and right brow signals across each answer.</li>
+      </ul>
+      <p>Caveats the authors themselves give: 16 participants, high-stakes TV context, and leaked fear is a <i>hot spot</i> — <b>not proof of lying</b>. Truth-tellers under pressure feel fear too. That's why the 🎯 calibration matters: it learns how <i>this person</i> looks when truthful vs lying, instead of comparing them to a TV game show.</p>
     </div>
   </details>
 
@@ -352,7 +377,7 @@ function computeEmotions(b){
   const contemptGate=(Math.max(sL,sR)>0.18 && Math.min(sL,sR)<0.12)?1:0;
   return {
     happiness:C(smile*1.15 - browDown*0.3),
-    sadness:C(innerUp*0.45 + frown*0.95 + (b.mouthShrugLower||0)*0.25 - smile*0.8),
+    sadness:C(innerUp*0.75 + frown*1.4 + (b.mouthShrugLower||0)*0.4 + (b.eyeLookDownLeft||0)*0.15 + (b.eyeLookDownRight||0)*0.15 - smile*0.8 - eyeWide*0.3),
     anger:C(browDown*0.95 + eyeSquint*0.2 + press*0.35 + (b.jawForward||0)*0.15 - smile*0.7 - jaw*0.25 - innerUp*0.3),
     fear:C(eyeWide*0.5 + innerUp*0.35 + browOuterUp*0.2 + stretch*0.5 - smile*0.6 - jaw*0.3),
     surprise:C(eyeWide*0.4 + browOuterUp*0.45 + innerUp*0.15 + jaw*0.45 - smile*0.4 - stretch*0.3),
@@ -370,6 +395,21 @@ let baseline=null, baselining=false, baseStart=0, baseAcc=null;
 const flashState={};            // per-emotion onset tracking
 EMOTIONS.forEach(e=>flashState[e.key]={active:false,onset:0,peak:0,img:null});
 let flashes=[];
+// AU20 (lip stretch) event tracker — Shen et al. 2021: lying = weaker, more fleeting AU20
+const au20={active:false,onset:0,peak:0,peakT:0,events:[]};
+function trackAU20(b,now){
+  const v=((b.mouthStretchLeft||0)+(b.mouthStretchRight||0))/2;
+  if(!au20.active && v>0.25){ au20.active=true; au20.onset=now; au20.peak=v; au20.peakT=now; }
+  else if(au20.active){
+    if(v>au20.peak){ au20.peak=v; au20.peakT=now; }
+    if(v<0.12){
+      au20.active=false;
+      const dur=now-au20.onset;
+      if(dur>40 && dur<5000) au20.events.push({t:au20.onset,dur,p2o:now-au20.peakT,peak:au20.peak});
+      while(au20.events.length && now-au20.events[0].t>180000) au20.events.shift();
+    }
+  }
+}
 
 function trackCues(raw,b,now){
   // blink (edge-detect)
@@ -386,6 +426,7 @@ function trackCues(raw,b,now){
   // lip compression EMA
   const lip=Math.max(raw._press, raw._roll);
   lipEMA=lipEMA*0.92+lip*0.08;
+  trackAU20(b,now);
   // micro-expression flash detection on RAW scores
   for(const e of EMOTIONS){
     const s=raw[e.key], st=flashState[e.key];
@@ -432,19 +473,64 @@ function renderFlashes(){
 }
 $('btnClearFlash').onclick=()=>{flashes=[];renderFlashes();};
 
-/* ================== QUESTION MODE ================== */
+/* ================== SOUNDS ================== */
+let soundOn=true, beepCtx=null;
+$('btnSound').onclick=()=>{
+  soundOn=!soundOn;
+  $('btnSound').textContent=soundOn?'🔊 Sound On':'🔇 Sound Off';
+  $('btnSound').classList.toggle('on',soundOn);
+};
+function beep(kind){
+  if(!soundOn) return;
+  try{
+    beepCtx=beepCtx||new (window.AudioContext||window.webkitAudioContext)();
+    if(beepCtx.state==='suspended') beepCtx.resume();
+    const t=beepCtx.currentTime;
+    const tone=(f,st,dur,type='sine',g=0.16)=>{
+      const o=beepCtx.createOscillator(),ga=beepCtx.createGain();
+      o.type=type; o.frequency.value=f; o.connect(ga); ga.connect(beepCtx.destination);
+      ga.gain.setValueAtTime(0.0001,t+st); ga.gain.linearRampToValueAtTime(g,t+st+0.02);
+      ga.gain.exponentialRampToValueAtTime(0.0001,t+st+dur);
+      o.start(t+st); o.stop(t+st+dur+0.06);
+    };
+    if(kind==='good'){ tone(660,0,0.14); tone(990,0.15,0.22); }          // truth-consistent: ascending ding
+    else if(kind==='warn'){ tone(420,0,0.18); }                          // inconclusive: single blip
+    else if(kind==='bad'){ tone(180,0,0.26,'sawtooth',0.2); tone(140,0.3,0.32,'sawtooth',0.2); } // elevated: low buzz
+    else if(kind==='tick'){ tone(880,0,0.05,'sine',0.08); }
+  }catch(e){}
+}
+
+/* ================== QUESTION MODE + CALIBRATION ================== */
 const QWIN=12000;
-const qmode={active:false,start:0,label:'',blinkMark:0,gazeOff:0,gazeN:0,lip:0,lipN:0,
-  flashes:[],pitch:[],speechMs:0,pauseMs:0,latency:null,socialSmile:0,smileN:0};
+const qmode={active:false,mode:null,start:0,label:'',blinkMark:0,gazeOff:0,gazeN:0,lip:0,lipN:0,
+  flashes:[],pitch:[],speechMs:0,pauseMs:0,latency:null,socialSmile:0,smileN:0,
+  browL:[],browR:[],au20Sum:0,fearSum:0,sampN:0};
 let qResults=[], qTimer=null;
+let calib=null;   // {baseline, truth:[features...], lie:[features...], t}
+try{
+  calib=JSON.parse(localStorage.getItem('cuesightCalib')||'null');
+  if(calib && calib.baseline){ baseline=calib.baseline; }
+}catch(e){ calib=null; }
 const esc=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const avgA=a=>a.reduce((s,v)=>s+v,0)/a.length;
+const stdA=a=>{const m=avgA(a);return Math.sqrt(a.reduce((s,v)=>s+(v-m)*(v-m),0)/a.length);};
+const FEAT_META={fleet:'Fleeting fear (AU20)',fearAmp:'Fear AU intensity',asym:'L/R asymmetry',
+  blink:'Blink rate',gaze:'Gaze aversion',lip:'Lip compression',mask:'Masking smile',
+  leaks:'Negative leaks',pitch:'Voice pitch',latency:'Response latency',hes:'Hesitation'};
 
-$('btnAsk').onclick=()=>qmode.active?finishQuestion():startQuestion();
+$('btnAsk').onclick=()=>{
+  if(qmode.active && qmode.mode==='question') finishQuestion();
+  else if(!qmode.active) startQuestion();
+};
 
-function startQuestion(){
-  Object.assign(qmode,{active:true,start:performance.now(),label:$('qLabel').value.trim(),
+function startWindow(mode,label){
+  Object.assign(qmode,{active:true,mode,start:performance.now(),label:label||'',
     blinkMark:blinkTimes.length,gazeOff:0,gazeN:0,lip:0,lipN:0,
-    flashes:[],pitch:[],speechMs:0,pauseMs:0,latency:null,socialSmile:0,smileN:0});
+    flashes:[],pitch:[],speechMs:0,pauseMs:0,latency:null,socialSmile:0,smileN:0,
+    browL:[],browR:[],au20Sum:0,fearSum:0,sampN:0});
+}
+function startQuestion(){
+  startWindow('question',$('qLabel').value.trim());
   $('btnAsk').classList.add('rec'); $('btnAsk').classList.remove('primary');
   qTimer=setInterval(()=>{
     const left=Math.ceil((QWIN-(performance.now()-qmode.start))/1000);
@@ -460,57 +546,199 @@ function qmodeSample(raw,b,now){
   qmode.gazeN++; if(off>0.45) qmode.gazeOff++;
   qmode.lip+=Math.max(raw._press,raw._roll); qmode.lipN++;
   if(raw.happiness>0.3){ qmode.smileN++; if(raw._cheek<0.25) qmode.socialSmile++; }
+  // left/right brow series for the asymmetry measure (Shen et al. 2021)
+  qmode.browL.push(b.browOuterUpLeft||0); qmode.browR.push(b.browOuterUpRight||0);
+  // fear Action Units composite: AU1,2,4,5,7,20,26
+  const au20v=((b.mouthStretchLeft||0)+(b.mouthStretchRight||0))/2;
+  qmode.au20Sum+=au20v;
+  qmode.fearSum+=((b.browInnerUp||0)+A('browOuterUpLeft','browOuterUpRight')+A('browDownLeft','browDownRight')
+    +A('eyeWideLeft','eyeWideRight')+A('eyeSquintLeft','eyeSquintRight')+au20v+(b.jawOpen||0))/7;
+  qmode.sampN++;
 }
-
-function finishQuestion(){
-  qmode.active=false; clearInterval(qTimer);
-  $('btnAsk').textContent='❓ Ask'; $('btnAsk').classList.remove('rec'); $('btnAsk').classList.add('primary');
-  $('qLabel').value='';
+function pearson(x,y){
+  const n=Math.min(x.length,y.length); if(n<20) return null;
+  let mx=0,my=0; for(let i=0;i<n;i++){mx+=x[i];my+=y[i];} mx/=n; my/=n;
+  let sxy=0,sx=0,sy=0;
+  for(let i=0;i<n;i++){const a=x[i]-mx,c=y[i]-my; sxy+=a*c; sx+=a*a; sy+=c*c;}
+  if(sx<1e-4||sy<1e-4) return null;   // brows barely moved — asymmetry undefined
+  return sxy/Math.sqrt(sx*sy);
+}
+function computeFeatures(){
   const C=v=>Math.max(0,Math.min(1,v));
   const dur=Math.max((performance.now()-qmode.start)/1000,3);
-  const cues=[];
-  // blink rate vs baseline (generic resting ~18/min if none)
-  const bRate=Math.round((blinkTimes.length-qmode.blinkMark)*60/dur);
-  const bBase=baseline?baseline.blink:18;
-  cues.push({k:'Blink rate',v:`${bRate}/min vs ${bBase}`,s:C((bRate-bBase)/Math.max(bBase,8)),w:0.18});
-  // gaze
-  const gp=qmode.gazeN?100*qmode.gazeOff/qmode.gazeN:0;
-  const gBase=baseline?baseline.gaze:15;
-  cues.push({k:'Gaze aversion',v:`${Math.round(gp)}% vs ${gBase}%`,s:C((gp-gBase)/40),w:0.12});
-  // lip compression
-  const lp=qmode.lipN?qmode.lip/qmode.lipN:0;
-  cues.push({k:'Lip compression',v:Math.round(lp*100)+'%',s:C((lp-(baseline?baseline.lip:0.06))*3),w:0.15});
-  // negative micro-expression leaks during the answer
-  const neg=qmode.flashes.filter(f=>['fear','contempt','disgust','anger','sadness'].includes(f.e));
-  cues.push({k:'Concealment flashes',
-    v:neg.length?neg.map(f=>EMOTIONS.find(x=>x.key===f.e).emoji).join(' '):'none',
-    s:C(neg.length/2),w:0.2});
-  // masking (non-Duchenne) smiles
-  const mask=qmode.smileN>5?qmode.socialSmile/qmode.smileN:0;
-  cues.push({k:'Masking smile',v:qmode.smileN>5?Math.round(mask*100)+'% non-genuine':'—',s:C(mask),w:0.08});
-  // voice cues only when mic is live
+  const f={};
+  f.blink=Math.round((blinkTimes.length-qmode.blinkMark)*60/dur);
+  f.gaze=qmode.gazeN?100*qmode.gazeOff/qmode.gazeN:0;
+  f.lip=qmode.lipN?qmode.lip/qmode.lipN:0;
+  f.leaks=qmode.flashes.filter(x=>['fear','contempt','disgust','anger','sadness'].includes(x.e)).length;
+  f.mask=qmode.smileN>5?qmode.socialSmile/qmode.smileN:null;
+  // AU20 dynamics in this window: lying = more fleeting (short) bursts
+  const evs=au20.events.filter(e=>e.t>=qmode.start);
+  if(evs.length){
+    const durs=evs.map(e=>e.dur).sort((a,b)=>a-b);
+    const med=durs[durs.length>>1];
+    f.fleet=C(0.65*(evs.filter(e=>e.dur<=500).length/evs.length)+0.35*C((450-med)/350));
+    f.au20n=evs.length;
+  }else{ f.fleet=null; f.au20n=0; }
+  f.fearAmp=qmode.sampN?qmode.fearSum/qmode.sampN:null;
+  const r=pearson(qmode.browL,qmode.browR);
+  f.asym=r===null?null:C(1-r);
   if(voice.on){
-    const pm=median(qmode.pitch), pBase=baseline?baseline.pitch:0;
-    cues.push({k:'Pitch elevation',
-      v:pm?Math.round(pm)+' Hz'+(pBase?` (${pm>=pBase?'+':''}${Math.round((pm/pBase-1)*100)}%)`:''):'no speech',
-      s:(pBase&&pm)?C((pm/pBase-1)*5):0,w:0.12});
-    const lat=qmode.latency;
-    cues.push({k:'Response latency',v:lat===null?'no speech':(lat/1000).toFixed(1)+'s',
-      s:lat===null?0.25:C((lat-700)/2500),w:0.08});
+    f.pitch=median(qmode.pitch)||null;
+    f.latency=qmode.latency;
     const tot=qmode.speechMs+qmode.pauseMs;
-    cues.push({k:'Hesitation',v:tot>2000?Math.round(100*qmode.pauseMs/tot)+'%':'—',
-      s:tot>2000?C((qmode.pauseMs/tot-0.15)*2.5):0,w:0.07});
+    f.hes=tot>2000?qmode.pauseMs/tot:null;
+  }else{ f.pitch=null; f.latency=null; f.hes=null; }
+  return f;
+}
+
+function finishQuestion(){            // ends whichever capture window is running
+  if(!qmode.active) return;
+  const mode=qmode.mode;
+  qmode.active=false; clearInterval(qTimer); qTimer=null;
+  const f=computeFeatures();
+  if(mode==='question') scoreQuestion(f);
+  else calAdvance(f);
+}
+
+function genericCues(f){
+  const C=v=>Math.max(0,Math.min(1,v));
+  const cues=[];
+  const bBase=baseline?baseline.blink:18, gBase=baseline?baseline.gaze:15;
+  if(f.fleet!==null) cues.push({k:'Fleeting fear (AU20)',v:`${f.au20n} burst${f.au20n>1?'s':''}`,s:f.fleet,w:0.2});
+  if(f.asym!==null){
+    const aBase=(baseline&&baseline.asym!=null)?baseline.asym:0.19;   // truth-telling coherence ≈0.81 in Shen 2021
+    cues.push({k:'L/R asymmetry',v:`${Math.round(f.asym*100)}% vs ${Math.round(aBase*100)}%`,s:C((f.asym-aBase)/0.25),w:0.15});
   }
-  let score=0,wsum=0; cues.forEach(c=>{score+=c.s*c.w;wsum+=c.w;});
-  const pct=Math.round(100*score/wsum);
+  cues.push({k:'Concealment flashes',
+    v:f.leaks?qmode.flashes.filter(x=>['fear','contempt','disgust','anger','sadness'].includes(x.e)).map(x=>EMOTIONS.find(y=>y.key===x.e).emoji).join(' '):'none',
+    s:C(f.leaks/2),w:0.15});
+  cues.push({k:'Blink rate',v:`${f.blink}/min vs ${bBase}`,s:C((f.blink-bBase)/Math.max(bBase,8)),w:0.1});
+  cues.push({k:'Gaze aversion',v:`${Math.round(f.gaze)}% vs ${gBase}%`,s:C((f.gaze-gBase)/40),w:0.07});
+  cues.push({k:'Lip compression',v:Math.round(f.lip*100)+'%',s:C((f.lip-(baseline?baseline.lip:0.06))*3),w:0.09});
+  if(f.mask!==null) cues.push({k:'Masking smile',v:Math.round(f.mask*100)+'% non-genuine',s:C(f.mask),w:0.06});
+  if(voice.on){
+    const pBase=baseline?baseline.pitch:0;
+    cues.push({k:'Pitch elevation',
+      v:f.pitch?Math.round(f.pitch)+' Hz'+(pBase?` (${f.pitch>=pBase?'+':''}${Math.round((f.pitch/pBase-1)*100)}%)`:''):'no speech',
+      s:(pBase&&f.pitch)?C((f.pitch/pBase-1)*5):0,w:0.08});
+    cues.push({k:'Response latency',v:f.latency===null?'no speech':(f.latency/1000).toFixed(1)+'s',
+      s:f.latency===null?0.25:C((f.latency-700)/2500),w:0.05});
+    if(f.hes!==null) cues.push({k:'Hesitation',v:Math.round(f.hes*100)+'%',s:C((f.hes-0.15)*2.5),w:0.05});
+  }
+  return cues;
+}
+
+function calibCompare(f){
+  // vote each feature toward whichever personal profile (truth vs lie) it sits closer to,
+  // weighted by how cleanly that feature separated during calibration
+  if(!calib||!calib.truth||calib.truth.length<2||!calib.lie||calib.lie.length<2) return null;
+  let vt=0,vl=0; const rows=[];
+  for(const k of Object.keys(FEAT_META)){
+    if(f[k]===null||f[k]===undefined) continue;
+    const tv=calib.truth.map(x=>x[k]).filter(v=>v!==null&&v!==undefined);
+    const lv=calib.lie.map(x=>x[k]).filter(v=>v!==null&&v!==undefined);
+    if(tv.length<2||lv.length<2) continue;
+    const tm=avgA(tv), lm=avgA(lv);
+    const noise=(stdA(tv)+stdA(lv))/2+1e-6;
+    const sep=Math.abs(tm-lm);
+    if(sep<noise*0.7) continue;          // this cue doesn't separate truth/lie for this person
+    const w=Math.min(2,sep/noise);
+    const closerLie=Math.abs(f[k]-lm)<Math.abs(f[k]-tm);
+    if(closerLie) vl+=w; else vt+=w;
+    rows.push({k:FEAT_META[k],closerLie,w});
+  }
+  if(vt+vl<1) return null;
+  return {p:vl/(vt+vl),rows};
+}
+
+function scoreQuestion(f){
+  $('btnAsk').textContent='❓ Ask'; $('btnAsk').classList.remove('rec'); $('btnAsk').classList.add('primary');
+  $('qLabel').value='';
+  const cues=genericCues(f);
+  let s=0,w=0; cues.forEach(c=>{s+=c.s*c.w; w+=c.w;});
+  let pct=Math.round(100*s/Math.max(w,0.01));
+  const cmp=calibCompare(f);
+  if(cmp) pct=Math.round(100*(0.55*cmp.p+0.45*(pct/100)));   // personal profiles dominate when available
   const verdict=pct<30?{t:'Truth-consistent',c:'good'}:pct<55?{t:'Inconclusive',c:'warn'}:{t:'Elevated — possible concealment',c:'bad'};
-  const confTxt=baseline&&voice.on?'Moderate confidence (baseline + voice active)'
-    :baseline?'Low confidence — turn the mic on for voice cues'
-    :voice.on?'Low confidence — capture a 30s baseline first'
-    :'Very low confidence — no baseline, no mic';
-  qResults.unshift({label:qmode.label||'Question '+(qResults.length+1),t:new Date(),pct,verdict,cues,confTxt,flashes:[...qmode.flashes]});
+  beep(verdict.c==='good'?'good':verdict.c==='warn'?'warn':'bad');
+  const confTxt=cmp?`Calibrated — scored against this person's own truth/lie patterns (${cmp.rows.length} informative cues)`
+    :calib?'Profile loaded but inconclusive for this window — generic scoring used'
+    :baseline&&voice.on?'Moderate confidence (baseline + voice) — run 🎯 Calibrate for personal profiles'
+    :baseline?'Low confidence — turn the mic on, and run 🎯 Calibrate'
+    :'Low confidence — run 🎯 Calibrate first for meaningful results';
+  qResults.unshift({label:qmode.label||'Question '+(qResults.length+1),t:new Date(),pct,verdict,cues,confTxt,
+    flashes:[...qmode.flashes],votes:cmp?cmp.rows:null});
   if(qResults.length>12) qResults.pop();
   renderQResults();
+}
+
+/* ---- guided truth/lie calibration ---- */
+const CAL_STEPS=[
+ {type:'rest', tag:'REST', text:'Have them relax and look at the camera, breathing normally. This captures their resting baseline.', dur:15000},
+ {type:'truth',tag:'TRUTH',text:'Ask: “Describe exactly what you’re wearing right now.” They must answer 100% truthfully.'},
+ {type:'truth',tag:'TRUTH',text:'Ask: “Walk me through what you did this morning, step by step.” Truthful answer.'},
+ {type:'truth',tag:'TRUTH',text:'Ask: “What’s your full name, and where were you born?” Truthful answer.'},
+ {type:'lie',  tag:'LIE',  text:'Ask: “Describe what you’re wearing.” This time they must LIE about every detail, convincingly.'},
+ {type:'lie',  tag:'LIE',  text:'Ask: “Tell me about the trip you took last month.” They must invent it completely and sell it.'},
+ {type:'lie',  tag:'LIE',  text:'Ask: “What did you eat this morning?” Completely made-up answer, as convincing as they can.'},
+];
+let calRun=null;
+$('btnCal').onclick=()=>calRun?calCancel():calStart();
+function calStart(){
+  calRun={i:0,truth:[],lie:[]};
+  $('btnCal').textContent='✖ Cancel calibration';
+  $('calWiz').style.display='block'; $('qResults').style.display='none';
+  calShowStep();
+}
+function calShowStep(){
+  const st=CAL_STEPS[calRun.i];
+  $('calTag').textContent=st.tag;
+  $('calTag').className='chip '+(st.type==='lie'?'bad':st.type==='truth'?'good':'warn');
+  $('calText').textContent=st.text;
+  $('calProg').textContent=`Step ${calRun.i+1} of ${CAL_STEPS.length}`;
+  $('btnCalGo').textContent=st.type==='rest'?'▶ Begin 15s rest capture':'▶ Start their answer';
+}
+$('btnCalGo').onclick=()=>{
+  if(qmode.active){ finishQuestion(); return; }       // tap again = stop early
+  const st=CAL_STEPS[calRun.i];
+  startWindow('cal-'+st.type);
+  const dur=st.dur||QWIN;
+  qTimer=setInterval(()=>{
+    const left=Math.ceil((dur-(performance.now()-qmode.start))/1000);
+    if(left<=0) finishQuestion();
+    else $('btnCalGo').textContent=`⏺ ${left}s — tap to stop early`;
+  },250);
+};
+function calAdvance(f){
+  if(!calRun) return;
+  const st=CAL_STEPS[calRun.i];
+  if(st.type==='rest')
+    baseline={blink:Math.max(2,f.blink),gaze:Math.round(f.gaze),lip:f.lip,pitch:f.pitch||0,asym:f.asym};
+  else calRun[st.type].push(f);
+  beep('tick');
+  calRun.i++;
+  if(calRun.i>=CAL_STEPS.length) calFinish();
+  else calShowStep();
+}
+function calFinish(){
+  calib={baseline,truth:calRun.truth,lie:calRun.lie,t:Date.now()};
+  try{localStorage.setItem('cuesightCalib',JSON.stringify(calib));}catch(e){}
+  calRun=null;
+  $('calWiz').style.display='none'; $('qResults').style.display='';
+  $('btnCal').textContent='✓ Re-calibrate';
+  $('baseHint').textContent='calibrated — personal truth/lie profile saved';
+  beep('good');
+}
+function calCancel(){
+  if(qmode.active){ qmode.active=false; clearInterval(qTimer); qTimer=null; }
+  calRun=null;
+  $('calWiz').style.display='none'; $('qResults').style.display='';
+  $('btnCal').textContent=calib?'✓ Re-calibrate':'🎯 Calibrate truth/lie profile';
+}
+if(calib){
+  $('btnCal').textContent='✓ Re-calibrate';
+  $('baseHint').textContent='calibrated — personal truth/lie profile loaded';
 }
 
 function renderQResults(){
@@ -521,6 +749,9 @@ function renderQResults(){
     <div class="gauge" style="margin-top:8px"><div class="fill" style="width:${r.pct}%"></div></div>
     <div class="gaugeLbl"><span>calm</span><span>${r.pct}% stress index</span><span>elevated</span></div>
     <details><summary>Cue breakdown ›</summary>
+      ${r.votes?`<div style="font-size:11px;color:var(--dim);margin:6px 0 2px">Personal profile match:</div>
+        ${r.votes.map(v=>`<div class="crow"><span>${v.k}</span><div></div><span class="cv" style="color:${v.closerLie?'var(--bad)':'var(--good)'}">${v.closerLie?'→ lie pattern':'→ truth pattern'} ×${v.w.toFixed(1)}</span></div>`).join('')}
+        <div style="font-size:11px;color:var(--dim);margin:8px 0 2px">Raw cues:</div>`:''}
       ${r.cues.map(c=>`<div class="crow"><span>${c.k}</span><div class="ct"><div class="cf" style="width:${Math.round(c.s*100)}%"></div></div><span class="cv">${c.v}</span></div>`).join('')}
       ${r.flashes.length?`<div style="font-size:11px;color:var(--dim);margin-top:5px">Leaks during answer: ${r.flashes.map(f=>{const em=EMOTIONS.find(x=>x.key===f.e);return em.emoji+' '+em.label;}).join(', ')}</div>`:''}
     </details>
@@ -567,7 +798,7 @@ async function startCamera(){
     drawingUtils=new DrawingUtilsCls($('overlay').getContext('2d'));
     $('camMsg').style.display='none'; $('emoBanner').style.display='flex';
     $('btnCam').textContent='⏹ Stop Camera'; $('btnCam').classList.remove('primary');
-    $('btnFlip').disabled=false; $('btnBase').disabled=false; $('btnAsk').disabled=false;
+    $('btnFlip').disabled=false; $('btnBase').disabled=false; $('btnAsk').disabled=false; $('btnCal').disabled=false;
     v.onpause=()=>{ if(running) v.play().catch(()=>{}); };          // browsers sometimes pause the element
     stream.getVideoTracks()[0].addEventListener('ended',()=>{ if(running) stopCamera(); });
     clearInterval(watchdog);
@@ -583,10 +814,11 @@ async function startCamera(){
 function stopCamera(){
   running=false;
   clearInterval(watchdog);
-  if(qmode.active) finishQuestion();
+  if(calRun) calCancel();
+  else if(qmode.active && qmode.mode==='question') finishQuestion();
   if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
   $('btnCam').textContent='▶ Start Camera'; $('btnCam').classList.add('primary');
-  $('btnFlip').disabled=true; $('btnBase').disabled=true; $('btnAsk').disabled=true;
+  $('btnFlip').disabled=true; $('btnBase').disabled=true; $('btnAsk').disabled=true; $('btnCal').disabled=true;
   $('camMsg').style.display='flex'; $('emoBanner').style.display='none';
   $('overlay').getContext('2d').clearRect(0,0,$('overlay').width,$('overlay').height);
   setStatus('idle');
@@ -834,10 +1066,11 @@ function answer(key,btn){
   const em=EMOTIONS.find(x=>x.key===trainer.target);
   if(key===trainer.target){
     trainer.correct++; trainer.streak++; trainer.score+=trainer.ms<=120?3:trainer.ms<=250?2:1;
+    beep('good');
     btn.classList.add('right');
     $('feedback').innerHTML=`<b style="color:var(--good)">✓ Correct — ${em.label}</b><br>${FEATURES[trainer.target]}`;
   }else{
-    trainer.streak=0; btn.classList.add('wrong');
+    trainer.streak=0; beep('warn'); btn.classList.add('wrong');
     $('feedback').innerHTML=`<b style="color:var(--bad)">✗ It was ${em.emoji} ${em.label}</b><br>${FEATURES[trainer.target]}`;
   }
   $('faceBox').innerHTML=svgFace(trainer.target);   // show it again, full
