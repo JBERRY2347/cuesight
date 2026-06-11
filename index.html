@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0d1220">
+<link rel="manifest" href="manifest.json">
+<title>CueSight — Expression & Cue Reader</title>
+<style>
+:root{
+  --bg:#0d1220; --panel:#161d31; --panel2:#1d2640; --border:#2a3554;
+  --text:#e8edf8; --dim:#8c98b8; --accent:#4da3ff; --accent2:#7c5cff;
+  --good:#3ddc84; --warn:#ffb347; --bad:#ff5c7a;
+  --happy:#3ddc84; --sad:#5c8aff; --anger:#ff5c5c; --fear:#c95cff;
+  --surprise:#ffd24d; --disgust:#7ec850; --contempt:#ff9d5c;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:15px;line-height:1.45;overscroll-behavior:none}
+header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:linear-gradient(135deg,#131a2e,#1a1430);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:50}
+header .logo{width:30px;height:30px;flex:none}
+header h1{font-size:17px;font-weight:700;letter-spacing:.3px}
+header h1 span{color:var(--accent)}
+header .status{margin-left:auto;font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px;text-align:right}
+.dot{width:8px;height:8px;border-radius:50%;background:#555;flex:none}
+.dot.on{background:var(--good);box-shadow:0 0 8px var(--good)}
+.dot.busy{background:var(--warn);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.4}}
+nav{display:flex;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:51px;z-index:49}
+nav button{flex:1;background:none;border:none;color:var(--dim);font:inherit;font-size:13px;font-weight:600;padding:11px 4px;cursor:pointer;border-bottom:2px solid transparent}
+nav button.active{color:var(--accent);border-bottom-color:var(--accent)}
+main{max-width:760px;margin:0 auto;padding:12px 12px 90px}
+.tab{display:none}
+.tab.active{display:block}
+.notice{background:rgba(77,163,255,.08);border:1px solid rgba(77,163,255,.3);border-radius:10px;padding:10px 12px;font-size:12.5px;color:#b8cdf0;margin-bottom:12px}
+.notice b{color:var(--text)}
+/* video */
+.videoWrap{position:relative;border-radius:14px;overflow:hidden;background:#000;aspect-ratio:4/3;border:1px solid var(--border)}
+.videoWrap.mirror video,.videoWrap.mirror canvas{transform:scaleX(-1)}
+video,#overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#camMsg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--dim);font-size:13px;text-align:center;padding:20px}
+#emoBanner{position:absolute;left:0;right:0;bottom:0;padding:8px 12px;background:linear-gradient(transparent,rgba(0,0,0,.75));display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px}
+#emoBanner .sub{font-size:11.5px;font-weight:500;color:#cfd8ee;margin-top:1px}
+#emoBanner .emoji{font-size:30px}
+.controls{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
+.btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);font:inherit;font-size:13px;font-weight:600;padding:9px 14px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.btn:active{transform:scale(.97)}
+.btn.primary{background:linear-gradient(135deg,#2563eb,#7c3aed);border-color:transparent}
+.btn.on{border-color:var(--good);color:var(--good)}
+.btn.rec{border-color:var(--warn);color:var(--warn)}
+.btn:disabled{opacity:.45;cursor:default}
+/* cards */
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.card h2 .hint{margin-left:auto;font-size:10.5px;text-transform:none;letter-spacing:0;font-weight:400}
+/* emotion bars */
+.ebar{display:grid;grid-template-columns:86px 1fr 38px;align-items:center;gap:8px;margin:6px 0;font-size:12.5px}
+.ebar .track{height:10px;background:#0b101e;border-radius:5px;overflow:hidden}
+.ebar .fill{height:100%;width:0%;border-radius:5px;transition:width .12s linear}
+.ebar .val{text-align:right;color:var(--dim);font-variant-numeric:tabular-nums;font-size:11.5px}
+/* cue chips */
+.cues{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.cue{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:9px 10px}
+.cue .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+.cue .v{font-size:17px;font-weight:700;margin-top:2px}
+.cue .s{font-size:10.5px;color:var(--dim)}
+.cue.alert{border-color:var(--warn)}
+.cue.alert .v{color:var(--warn)}
+/* deviation gauge */
+.gauge{height:14px;background:#0b101e;border-radius:7px;overflow:hidden;margin-top:6px}
+.gauge .fill{height:100%;width:0%;background:linear-gradient(90deg,var(--good),var(--warn) 55%,var(--bad));transition:width .3s}
+.gaugeLbl{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim);margin-top:3px}
+/* flash timeline */
+#flashList{display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto}
+.flash{display:flex;gap:10px;align-items:center;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:8px}
+.flash img{width:72px;height:54px;object-fit:cover;border-radius:6px;flex:none}
+.flash .fi b{font-size:14px}
+.flash .fi div{font-size:11px;color:var(--dim)}
+.empty{color:var(--dim);font-size:12.5px;text-align:center;padding:14px 6px}
+/* question mode */
+.qRow{display:flex;gap:8px;margin-bottom:10px}
+.qRow input{flex:1;min-width:0;background:#0b101e;border:1px solid var(--border);border-radius:10px;color:var(--text);font:inherit;font-size:13px;padding:9px 12px}
+.qRow input::placeholder{color:#5a6685}
+.qres{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.qres .qhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.qres .qhead b{font-size:13.5px}
+.qres .qtime{font-size:10.5px;color:var(--dim);margin-left:auto}
+.chip{font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap}
+.chip.good{background:rgba(61,220,132,.15);color:var(--good)}
+.chip.warn{background:rgba(255,179,71,.15);color:var(--warn)}
+.chip.bad{background:rgba(255,92,122,.15);color:var(--bad)}
+.crow{display:grid;grid-template-columns:118px 1fr auto;gap:8px;align-items:center;font-size:11.5px;margin:4px 0;color:#c9d4ec}
+.crow .ct{height:7px;background:#0b101e;border-radius:4px;overflow:hidden}
+.crow .cf{height:100%;background:linear-gradient(90deg,var(--good),var(--warn) 55%,var(--bad))}
+.crow .cv{text-align:right;color:var(--dim);font-size:10.5px;max-width:130px}
+.qconf{font-size:10.5px;color:var(--dim);margin-top:7px}
+.qres details{background:none;border:none;margin:6px 0 0;border-radius:0}
+.qres summary{padding:6px 0 0;font-size:11.5px;color:var(--accent)}
+/* trainer */
+#faceBox{display:flex;justify-content:center;padding:8px 0;min-height:230px;align-items:center}
+#faceBox svg{width:210px;height:210px}
+.answers{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.answers button{background:var(--panel2);border:1px solid var(--border);color:var(--text);font:inherit;font-size:12px;font-weight:600;padding:10px 4px;border-radius:10px;cursor:pointer}
+.answers button:disabled{opacity:.4}
+.answers button.right{border-color:var(--good);color:var(--good)}
+.answers button.wrong{border-color:var(--bad);color:var(--bad)}
+#feedback{min-height:48px;font-size:13px;margin:10px 0;color:#c9d4ec}
+#feedback b{font-size:15px}
+.tstats{display:flex;gap:14px;font-size:12.5px;color:var(--dim);margin-bottom:8px;flex-wrap:wrap}
+.tstats b{color:var(--text)}
+.speedRow{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--dim);margin-bottom:8px}
+.speedRow button{background:var(--panel2);border:1px solid var(--border);color:var(--dim);font-size:11.5px;padding:5px 10px;border-radius:8px;cursor:pointer}
+.speedRow button.active{color:var(--accent);border-color:var(--accent)}
+/* learn */
+details{background:var(--panel);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden}
+summary{padding:13px 14px;font-weight:700;font-size:14px;cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px}
+summary::-webkit-details-marker{display:none}
+summary .chev{margin-left:auto;color:var(--dim);transition:transform .2s}
+details[open] summary .chev{transform:rotate(90deg)}
+.dbody{padding:0 14px 14px;font-size:13.5px;color:#c9d4ec}
+.dbody ul{margin:8px 0 8px 18px}
+.dbody li{margin:4px 0}
+.dbody p{margin:8px 0}
+.learnFace{float:right;width:96px;height:96px;margin:0 0 8px 10px}
+.tag{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;margin-left:4px;vertical-align:middle}
+.tag.myth{background:rgba(255,92,122,.15);color:var(--bad)}
+.tag.works{background:rgba(61,220,132,.15);color:var(--good)}
+footer{position:fixed;bottom:0;left:0;right:0;background:rgba(13,18,32,.95);border-top:1px solid var(--border);padding:7px 14px;font-size:10.5px;color:var(--dim);text-align:center;z-index:50;backdrop-filter:blur(6px)}
+@media(max-width:430px){.answers{grid-template-columns:repeat(2,1fr)}.cues{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header>
+  <svg class="logo" viewBox="0 0 64 64"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4da3ff"/><stop offset="1" stop-color="#7c5cff"/></linearGradient></defs><circle cx="32" cy="32" r="28" fill="none" stroke="url(#lg)" stroke-width="4"/><circle cx="32" cy="32" r="10" fill="url(#lg)"/><circle cx="35" cy="29" r="3.5" fill="#0d1220"/></svg>
+  <h1>Cue<span>Sight</span></h1>
+  <div class="status"><span id="statusTxt">idle</span><span class="dot" id="statusDot"></span></div>
+</header>
+
+<nav>
+  <button class="active" data-tab="live">📹 Live</button>
+  <button data-tab="trainer">🎯 Trainer</button>
+  <button data-tab="learn">📖 Learn</button>
+</nav>
+
+<main>
+<!-- ============ LIVE TAB ============ -->
+<div class="tab active" id="tab-live">
+  <div class="notice"><b>Honest framing:</b> CueSight reads facial expressions and stress/concealment cues. No technology can reliably detect lies — treat cues as conversation prompts, not verdicts. <b>Always get consent</b> before pointing a camera or mic at someone.</div>
+
+  <div class="videoWrap mirror" id="videoWrap">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="overlay"></canvas>
+    <div id="camMsg"><div style="font-size:34px">📷</div><div>Tap <b>Start Camera</b> below.<br>First load downloads the face model (~3&nbsp;MB).</div></div>
+    <div id="emoBanner" style="display:none">
+      <span class="emoji" id="emoEmoji">😐</span>
+      <div><span id="emoName">Neutral</span><div class="sub" id="emoSub"></div></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn primary" id="btnCam">▶ Start Camera</button>
+    <button class="btn" id="btnFlip" disabled>🔄 Flip</button>
+    <button class="btn" id="btnMic">🎙 Mic Off</button>
+    <button class="btn" id="btnBase" disabled>📊 Capture Baseline (30s)</button>
+  </div>
+
+  <div class="card">
+    <h2>❓ Question Mode <span class="hint">stress ≠ lying — it shows where to dig</span></h2>
+    <div class="qRow">
+      <input id="qLabel" type="text" maxlength="80" placeholder="Question label (optional) — e.g. “Where were you Friday?”">
+      <button class="btn primary" id="btnAsk" disabled>❓ Ask</button>
+    </div>
+    <div id="qResults"><div class="empty">Capture a baseline and turn the mic on, then tap <b>Ask</b> the moment you finish asking your question. CueSight scores the 12-second reaction window: micro-expression leaks, blink/gaze/lip changes vs. baseline, response latency, pitch and hesitation.</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Emotion Engine <span class="hint">7 universal expressions, live</span></h2>
+    <div id="ebars"></div>
+  </div>
+
+  <div class="card">
+    <h2>Stress / Concealment Cues <span class="hint" id="baseHint">no baseline yet</span></h2>
+    <div class="cues">
+      <div class="cue" id="cueBlink"><div class="k">Blink rate</div><div class="v">—</div><div class="s">blinks / min</div></div>
+      <div class="cue" id="cueGaze"><div class="k">Gaze aversion</div><div class="v">—</div><div class="s">% of last 30s</div></div>
+      <div class="cue" id="cueLip"><div class="k">Lip compression</div><div class="v">—</div><div class="s">pressing / rolling in</div></div>
+      <div class="cue" id="cueSmile"><div class="k">Smile type</div><div class="v">—</div><div class="s">Duchenne check</div></div>
+      <div class="cue" id="cuePitch"><div class="k">Voice pitch</div><div class="v">—</div><div class="s">Hz (median 5s)</div></div>
+      <div class="cue" id="cueHes"><div class="k">Hesitation</div><div class="v">—</div><div class="s">pause ratio, 60s</div></div>
+    </div>
+    <div style="margin-top:12px">
+      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px">Deviation from baseline</div>
+      <div class="gauge"><div class="fill" id="devFill"></div></div>
+      <div class="gaugeLbl"><span>calm / matches baseline</span><span id="devVal">—</span><span>elevated</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>⚡ Micro-Expression Flashes <span class="hint">leaks &lt; ½ second, auto-captured</span>
+      <button class="btn" id="btnClearFlash" style="margin-left:8px;padding:4px 10px;font-size:11px">Clear</button></h2>
+    <div id="flashList"><div class="empty">Flashes that contradict the prevailing expression will appear here with a snapshot.</div></div>
+  </div>
+</div>
+
+<!-- ============ TRAINER TAB ============ -->
+<div class="tab" id="tab-trainer">
+  <div class="card">
+    <h2>Micro-Expression Trainer</h2>
+    <div class="tstats">
+      <span>Score <b id="tScore">0</b></span>
+      <span>Streak <b id="tStreak">0</b></span>
+      <span>Accuracy <b id="tAcc">—</b></span>
+    </div>
+    <div class="speedRow">Flash speed:
+      <button data-ms="500">Easy ½s</button>
+      <button data-ms="250" class="active">Real ¼s</button>
+      <button data-ms="120">Expert ⅛s</button>
+    </div>
+    <div id="faceBox"><div class="empty">Press Start — a face will flash an expression, then return to neutral. Name what you saw.</div></div>
+    <div id="feedback"></div>
+    <div class="answers" id="answerBtns"></div>
+    <div class="controls" style="margin-top:10px">
+      <button class="btn primary" id="btnTrain">▶ Start Round</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ LEARN TAB ============ -->
+<div class="tab" id="tab-learn">
+  <div id="learnCards"></div>
+
+  <details>
+    <summary>😊 Real vs. fake smiles (the Duchenne test)<span class="chev">›</span></summary>
+    <div class="dbody">
+      <p>A genuine smile fires the <b>orbicularis oculi</b> — the muscle ringing the eye — producing crow's-feet wrinkles and lifted cheeks. A social or forced smile moves the mouth only.</p>
+      <ul><li><b>Genuine:</b> eyes narrow, cheeks rise, crow's feet appear.</li>
+      <li><b>Fake:</b> mouth smiles, eyes stay flat; often switches on/off too abruptly and lasts too long.</li></ul>
+      <p>CueSight's "Smile type" cue runs this check live using the cheek-squint muscles.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>⚖️ What science actually says about lie detection<span class="chev">›</span></summary>
+    <div class="dbody">
+      <p>The landmark Bond &amp; DePaulo meta-analysis (206 studies, 24,000+ judges) found people detect lies at <b>54% accuracy</b> — barely above a coin flip. Police and judges score no better than students.</p>
+      <p><b>Myths</b> <span class="tag myth">debunked</span></p>
+      <ul>
+        <li>"Looking up-and-to-the-right = lying" (NLP) — rejected by 23 of 24 peer-reviewed studies.</li>
+        <li>Gaze aversion, fidgeting, face-touching as lie signs — no reliable link.</li>
+        <li>Micro-expressions as lie proof — they reveal a <i>concealed emotion</i>, not <i>why</i>. A truthful person under suspicion feels fear too (the "Othello error").</li>
+      </ul>
+      <p><b>What helps</b> <span class="tag works">evidence-based</span></p>
+      <ul>
+        <li><b>Baseline first:</b> learn how this person acts when relaxed; watch for <i>clusters of deviation</i>, never single cues.</li>
+        <li><b>Cognitive load:</b> lying is mentally harder. Unexpected questions and telling a story in reverse order degrade fabricated accounts more than true ones.</li>
+        <li><b>Content over body:</b> real memories carry more sensory detail and complications; fabricated stories are smoother, shorter and stay inconsistent across retellings.</li>
+        <li><b>Weak real correlates:</b> fewer details, vocal tension/raised pitch, lip pressing, fewer genuine smiles, fewer illustrative hand gestures, dilated pupils.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details>
+    <summary>🫥 Body language beyond the face<span class="chev">›</span></summary>
+    <div class="dbody">
+      <ul>
+        <li><b>Happy / confident:</b> open posture, uncrossed arms, leaning in, animated gestures.</li>
+        <li><b>Sad / low:</b> downward gaze, slumped shoulders, minimal facial movement, slow speech.</li>
+        <li><b>Anxious:</b> leg bouncing, lip biting, locked ankles, rapid blinking, self-soothing (neck, hair, hands).</li>
+        <li><b>Defensive:</b> crossed arms, body angled away, feet toward the exit, objects held as barriers.</li>
+        <li><b>Engaged:</b> sustained eye contact, mirroring your posture, head tilts, nodding.</li>
+        <li><b>Pupils</b> can't be consciously controlled: they dilate with interest, arousal and mental effort.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details>
+    <summary>🔒 Ethics, consent &amp; legal<span class="chev">›</span></summary>
+    <div class="dbody">
+      <ul>
+        <li><b>Get consent</b> before recording anyone. Many US states require <b>all-party consent</b> for audio recording of conversations — using the mic on someone unaware may be illegal where you live.</li>
+        <li>All processing happens <b>on your device</b> — CueSight sends no video or audio anywhere.</li>
+        <li>Never use cue readings to accuse someone. Use them to decide where to ask better questions.</li>
+      </ul>
+    </div>
+  </details>
+</div>
+</main>
+
+<footer>On-device analysis only · Not a lie detector · Expressions ≠ truth · Get consent before recording</footer>
+
+<script type="module">
+/* ================== STATE ================== */
+const $=id=>document.getElementById(id);
+const EMOTIONS=[
+ {key:'happiness',label:'Happiness',emoji:'😊',color:'var(--happy)'},
+ {key:'sadness',label:'Sadness',emoji:'😢',color:'var(--sad)'},
+ {key:'anger',label:'Anger',emoji:'😠',color:'var(--anger)'},
+ {key:'fear',label:'Fear',emoji:'😨',color:'var(--fear)'},
+ {key:'surprise',label:'Surprise',emoji:'😲',color:'var(--surprise)'},
+ {key:'disgust',label:'Disgust',emoji:'🤢',color:'var(--disgust)'},
+ {key:'contempt',label:'Contempt',emoji:'😏',color:'var(--contempt)'},
+];
+const FEATURES={
+ happiness:'Lip corners up; genuine version adds crow’s feet and raised cheeks (eyes narrow).',
+ sadness:'Inner eyebrow corners pulled UP and together; upper eyelids droop; lip corners pulled down.',
+ anger:'Brows lowered and drawn together (vertical glare lines); eyelids tense, hard stare; lips pressed tight or squared.',
+ fear:'Brows raised and pulled FLAT/straight together; upper eyelids high, whites showing; lips stretched sideways.',
+ surprise:'Brows high and CURVED; eyes wide; jaw drops open loosely. The briefest emotion.',
+ disgust:'Nose wrinkles; upper lip raises; brows drop slightly. Think "bad smell."',
+ contempt:'The only one-sided expression: a single lip corner tightens and raises — a smirk. Directed at people.',
+};
+let faceLandmarker=null, drawingUtils=null, DrawingUtilsCls=null, FaceLandmarkerCls=null;
+let stream=null, running=false, facing='user';
+let smooth={}, lastVideoTime=-1;
+EMOTIONS.forEach(e=>smooth[e.key]=0);
+
+/* status */
+function setStatus(txt,mode){ $('statusTxt').textContent=txt; $('statusDot').className='dot'+(mode?' '+mode:''); }
+
+/* ================== TABS ================== */
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.id==='tab-'+b.dataset.tab));
+});
+
+/* ================== EMOTION BARS ================== */
+const ebars=$('ebars');
+EMOTIONS.forEach(e=>{
+  ebars.insertAdjacentHTML('beforeend',
+   `<div class="ebar"><span>${e.emoji} ${e.label}</span><div class="track"><div class="fill" id="fill-${e.key}" style="background:${e.color}"></div></div><span class="val" id="val-${e.key}">0%</span></div>`);
+});
+
+/* ================== EMOTION SCORING ================== */
+function computeEmotions(b){
+  const A=(...n)=>n.reduce((s,k)=>s+(b[k]||0),0)/n.length;
+  const C=v=>Math.max(0,Math.min(1,v));
+  const smile=A('mouthSmileLeft','mouthSmileRight');
+  const cheek=A('cheekSquintLeft','cheekSquintRight');
+  const browDown=A('browDownLeft','browDownRight');
+  const browOuterUp=A('browOuterUpLeft','browOuterUpRight');
+  const innerUp=b.browInnerUp||0;
+  const eyeWide=A('eyeWideLeft','eyeWideRight');
+  const eyeSquint=A('eyeSquintLeft','eyeSquintRight');
+  const frown=A('mouthFrownLeft','mouthFrownRight');
+  const stretch=A('mouthStretchLeft','mouthStretchRight');
+  const press=A('mouthPressLeft','mouthPressRight');
+  const sneer=A('noseSneerLeft','noseSneerRight');
+  const upperUp=A('mouthUpperUpLeft','mouthUpperUpRight');
+  const jaw=b.jawOpen||0;
+  const sL=b.mouthSmileLeft||0, sR=b.mouthSmileRight||0;
+  const asym=Math.abs(sL-sR);
+  const contemptGate=(Math.max(sL,sR)>0.18 && Math.min(sL,sR)<0.12)?1:0;
+  return {
+    happiness:C(smile*1.15 - browDown*0.3),
+    sadness:C(innerUp*0.45 + frown*0.95 + (b.mouthShrugLower||0)*0.25 - smile*0.8),
+    anger:C(browDown*0.95 + eyeSquint*0.2 + press*0.35 + (b.jawForward||0)*0.15 - smile*0.7 - jaw*0.25 - innerUp*0.3),
+    fear:C(eyeWide*0.5 + innerUp*0.35 + browOuterUp*0.2 + stretch*0.5 - smile*0.6 - jaw*0.3),
+    surprise:C(eyeWide*0.4 + browOuterUp*0.45 + innerUp*0.15 + jaw*0.45 - smile*0.4 - stretch*0.3),
+    disgust:C(sneer*1.0 + upperUp*0.45 + browDown*0.1 - smile*0.5),
+    contempt:C(((asym-0.05)*4)*contemptGate - jaw*0.3),
+    _smile:smile,_cheek:cheek,_press:press,_roll:A('mouthRollLower','mouthRollUpper'),
+  };
+}
+
+/* ================== CUE TRACKING ================== */
+const blinkTimes=[]; let blinkClosed=false;
+const gazeSamples=[];           // {t, off}
+let lipEMA=0;
+let baseline=null, baselining=false, baseStart=0, baseAcc=null;
+const flashState={};            // per-emotion onset tracking
+EMOTIONS.forEach(e=>flashState[e.key]={active:false,onset:0,peak:0,img:null});
+let flashes=[];
+
+function trackCues(raw,b,now){
+  // blink (edge-detect)
+  const blink=((b.eyeBlinkLeft||0)+(b.eyeBlinkRight||0))/2;
+  if(blink>0.55 && !blinkClosed){ blinkClosed=true; blinkTimes.push(now); }
+  else if(blink<0.35) blinkClosed=false;
+  while(blinkTimes.length && now-blinkTimes[0]>60000) blinkTimes.shift();
+  // gaze off-center
+  const A=(...n)=>n.reduce((s,k)=>s+(b[k]||0),0)/n.length;
+  const off=Math.max(A('eyeLookUpLeft','eyeLookUpRight'),A('eyeLookDownLeft','eyeLookDownRight'),
+                     A('eyeLookOutLeft','eyeLookInRight'),A('eyeLookInLeft','eyeLookOutRight'));
+  gazeSamples.push({t:now,off:off>0.45});
+  while(gazeSamples.length && now-gazeSamples[0].t>30000) gazeSamples.shift();
+  // lip compression EMA
+  const lip=Math.max(raw._press, raw._roll);
+  lipEMA=lipEMA*0.92+lip*0.08;
+  // micro-expression flash detection on RAW scores
+  for(const e of EMOTIONS){
+    const s=raw[e.key], st=flashState[e.key];
+    const prevailing=dominantKey();
+    if(!st.active && s>0.42 && prevailing!==e.key){
+      st.active=true; st.onset=now; st.peak=s; st.img=snapshot();
+    }else if(st.active){
+      if(s>st.peak){ st.peak=s; st.img=snapshot(); }
+      if(s<0.22){
+        const dur=now-st.onset; st.active=false;
+        if(dur>=40 && dur<=500) addFlash(e,st.peak,dur,st.img);
+        st.img=null;
+      }else if(now-st.onset>1200){ st.active=false; st.img=null; } // sustained = not a micro
+    }
+  }
+}
+function dominantKey(){
+  let best=null,bv=0.22;
+  for(const e of EMOTIONS) if(smooth[e.key]>bv){bv=smooth[e.key];best=e.key;}
+  return best;
+}
+const snapCanvas=document.createElement('canvas');
+function snapshot(){
+  const v=$('video'); if(!v.videoWidth) return null;
+  snapCanvas.width=160; snapCanvas.height=120;
+  const c=snapCanvas.getContext('2d');
+  if(facing==='user'){ c.save(); c.translate(160,0); c.scale(-1,1); c.drawImage(v,0,0,160,120); c.restore(); }
+  else c.drawImage(v,0,0,160,120);
+  return snapCanvas.toDataURL('image/jpeg',0.7);
+}
+function addFlash(e,peak,dur,img){
+  if(qmode.active) qmode.flashes.push({e:e.key,peak});
+  flashes.unshift({e:e.key,peak,dur,img,t:new Date()});
+  if(flashes.length>20) flashes.pop();
+  renderFlashes();
+}
+function renderFlashes(){
+  const el=$('flashList');
+  if(!flashes.length){ el.innerHTML='<div class="empty">Flashes that contradict the prevailing expression will appear here with a snapshot.</div>'; return; }
+  el.innerHTML=flashes.map(f=>{
+    const em=EMOTIONS.find(x=>x.key===f.e);
+    return `<div class="flash">${f.img?`<img src="${f.img}">`:''}<div class="fi"><b>${em.emoji} ${em.label} flash</b><div>${Math.round(f.dur)} ms · peak ${(f.peak*100|0)}% · ${f.t.toLocaleTimeString()}</div></div></div>`;
+  }).join('');
+}
+$('btnClearFlash').onclick=()=>{flashes=[];renderFlashes();};
+
+/* ================== QUESTION MODE ================== */
+const QWIN=12000;
+const qmode={active:false,start:0,label:'',blinkMark:0,gazeOff:0,gazeN:0,lip:0,lipN:0,
+  flashes:[],pitch:[],speechMs:0,pauseMs:0,latency:null,socialSmile:0,smileN:0};
+let qResults=[], qTimer=null;
+const esc=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+$('btnAsk').onclick=()=>qmode.active?finishQuestion():startQuestion();
+
+function startQuestion(){
+  Object.assign(qmode,{active:true,start:performance.now(),label:$('qLabel').value.trim(),
+    blinkMark:blinkTimes.length,gazeOff:0,gazeN:0,lip:0,lipN:0,
+    flashes:[],pitch:[],speechMs:0,pauseMs:0,latency:null,socialSmile:0,smileN:0});
+  $('btnAsk').classList.add('rec'); $('btnAsk').classList.remove('primary');
+  qTimer=setInterval(()=>{
+    const left=Math.ceil((QWIN-(performance.now()-qmode.start))/1000);
+    if(left<=0) finishQuestion();
+    else $('btnAsk').textContent=`⏺ ${left}s — tap to stop`;
+  },250);
+}
+
+function qmodeSample(raw,b,now){
+  const A=(...n)=>n.reduce((s,k)=>s+(b[k]||0),0)/n.length;
+  const off=Math.max(A('eyeLookUpLeft','eyeLookUpRight'),A('eyeLookDownLeft','eyeLookDownRight'),
+                     A('eyeLookOutLeft','eyeLookInRight'),A('eyeLookInLeft','eyeLookOutRight'));
+  qmode.gazeN++; if(off>0.45) qmode.gazeOff++;
+  qmode.lip+=Math.max(raw._press,raw._roll); qmode.lipN++;
+  if(raw.happiness>0.3){ qmode.smileN++; if(raw._cheek<0.25) qmode.socialSmile++; }
+}
+
+function finishQuestion(){
+  qmode.active=false; clearInterval(qTimer);
+  $('btnAsk').textContent='❓ Ask'; $('btnAsk').classList.remove('rec'); $('btnAsk').classList.add('primary');
+  $('qLabel').value='';
+  const C=v=>Math.max(0,Math.min(1,v));
+  const dur=Math.max((performance.now()-qmode.start)/1000,3);
+  const cues=[];
+  // blink rate vs baseline (generic resting ~18/min if none)
+  const bRate=Math.round((blinkTimes.length-qmode.blinkMark)*60/dur);
+  const bBase=baseline?baseline.blink:18;
+  cues.push({k:'Blink rate',v:`${bRate}/min vs ${bBase}`,s:C((bRate-bBase)/Math.max(bBase,8)),w:0.18});
+  // gaze
+  const gp=qmode.gazeN?100*qmode.gazeOff/qmode.gazeN:0;
+  const gBase=baseline?baseline.gaze:15;
+  cues.push({k:'Gaze aversion',v:`${Math.round(gp)}% vs ${gBase}%`,s:C((gp-gBase)/40),w:0.12});
+  // lip compression
+  const lp=qmode.lipN?qmode.lip/qmode.lipN:0;
+  cues.push({k:'Lip compression',v:Math.round(lp*100)+'%',s:C((lp-(baseline?baseline.lip:0.06))*3),w:0.15});
+  // negative micro-expression leaks during the answer
+  const neg=qmode.flashes.filter(f=>['fear','contempt','disgust','anger','sadness'].includes(f.e));
+  cues.push({k:'Concealment flashes',
+    v:neg.length?neg.map(f=>EMOTIONS.find(x=>x.key===f.e).emoji).join(' '):'none',
+    s:C(neg.length/2),w:0.2});
+  // masking (non-Duchenne) smiles
+  const mask=qmode.smileN>5?qmode.socialSmile/qmode.smileN:0;
+  cues.push({k:'Masking smile',v:qmode.smileN>5?Math.round(mask*100)+'% non-genuine':'—',s:C(mask),w:0.08});
+  // voice cues only when mic is live
+  if(voice.on){
+    const pm=median(qmode.pitch), pBase=baseline?baseline.pitch:0;
+    cues.push({k:'Pitch elevation',
+      v:pm?Math.round(pm)+' Hz'+(pBase?` (${pm>=pBase?'+':''}${Math.round((pm/pBase-1)*100)}%)`:''):'no speech',
+      s:(pBase&&pm)?C((pm/pBase-1)*5):0,w:0.12});
+    const lat=qmode.latency;
+    cues.push({k:'Response latency',v:lat===null?'no speech':(lat/1000).toFixed(1)+'s',
+      s:lat===null?0.25:C((lat-700)/2500),w:0.08});
+    const tot=qmode.speechMs+qmode.pauseMs;
+    cues.push({k:'Hesitation',v:tot>2000?Math.round(100*qmode.pauseMs/tot)+'%':'—',
+      s:tot>2000?C((qmode.pauseMs/tot-0.15)*2.5):0,w:0.07});
+  }
+  let score=0,wsum=0; cues.forEach(c=>{score+=c.s*c.w;wsum+=c.w;});
+  const pct=Math.round(100*score/wsum);
+  const verdict=pct<30?{t:'Truth-consistent',c:'good'}:pct<55?{t:'Inconclusive',c:'warn'}:{t:'Elevated — possible concealment',c:'bad'};
+  const confTxt=baseline&&voice.on?'Moderate confidence (baseline + voice active)'
+    :baseline?'Low confidence — turn the mic on for voice cues'
+    :voice.on?'Low confidence — capture a 30s baseline first'
+    :'Very low confidence — no baseline, no mic';
+  qResults.unshift({label:qmode.label||'Question '+(qResults.length+1),t:new Date(),pct,verdict,cues,confTxt,flashes:[...qmode.flashes]});
+  if(qResults.length>12) qResults.pop();
+  renderQResults();
+}
+
+function renderQResults(){
+  const el=$('qResults');
+  if(!qResults.length) return;
+  el.innerHTML=qResults.map(r=>`<div class="qres">
+    <div class="qhead"><b>${esc(r.label)}</b><span class="chip ${r.verdict.c}">${r.verdict.t}</span><span class="qtime">${r.t.toLocaleTimeString()}</span></div>
+    <div class="gauge" style="margin-top:8px"><div class="fill" style="width:${r.pct}%"></div></div>
+    <div class="gaugeLbl"><span>calm</span><span>${r.pct}% stress index</span><span>elevated</span></div>
+    <details><summary>Cue breakdown ›</summary>
+      ${r.cues.map(c=>`<div class="crow"><span>${c.k}</span><div class="ct"><div class="cf" style="width:${Math.round(c.s*100)}%"></div></div><span class="cv">${c.v}</span></div>`).join('')}
+      ${r.flashes.length?`<div style="font-size:11px;color:var(--dim);margin-top:5px">Leaks during answer: ${r.flashes.map(f=>{const em=EMOTIONS.find(x=>x.key===f.e);return em.emoji+' '+em.label;}).join(', ')}</div>`:''}
+    </details>
+    <div class="qconf">${r.confTxt} · stress ≠ lying — compare across questions and ask follow-ups where it spikes</div>
+  </div>`).join('');
+}
+
+/* ================== CAMERA + LOOP ================== */
+const WASM_URL='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+const MODEL_URL='https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+let visionMod=null, lastTs=0, loopErrors=0, cpuMode=false, reinitializing=false, watchdog=null;
+async function makeLandmarker(delegate){
+  const resolver=await visionMod.FilesetResolver.forVisionTasks(WASM_URL);
+  return visionMod.FaceLandmarker.createFromOptions(resolver,{
+    baseOptions:{modelAssetPath:MODEL_URL,delegate},
+    outputFaceBlendshapes:true, runningMode:'VIDEO', numFaces:1
+  });
+}
+async function loadModel(){
+  if(faceLandmarker) return;
+  setStatus('loading model…','busy');
+  visionMod=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14');
+  FaceLandmarkerCls=visionMod.FaceLandmarker; DrawingUtilsCls=visionMod.DrawingUtils;
+  faceLandmarker=await makeLandmarker('GPU');
+}
+async function gpuFallback(){
+  // repeated frame errors usually mean the GPU delegate / WebGL context died — rebuild on CPU
+  if(reinitializing||cpuMode) return;
+  reinitializing=true; cpuMode=true;
+  setStatus('switching to CPU…','busy');
+  try{
+    faceLandmarker=await makeLandmarker('CPU');
+    loopErrors=0; setStatus('analyzing (CPU)','on');
+  }catch(e){ setStatus('model error'); running=false; }
+  reinitializing=false;
+}
+async function startCamera(){
+  try{
+    await loadModel();
+    setStatus('starting camera…','busy');
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1280},height:{ideal:960}},audio:false});
+    const v=$('video'); v.srcObject=stream; await v.play();
+    $('overlay').width=v.videoWidth; $('overlay').height=v.videoHeight;
+    drawingUtils=new DrawingUtilsCls($('overlay').getContext('2d'));
+    $('camMsg').style.display='none'; $('emoBanner').style.display='flex';
+    $('btnCam').textContent='⏹ Stop Camera'; $('btnCam').classList.remove('primary');
+    $('btnFlip').disabled=false; $('btnBase').disabled=false; $('btnAsk').disabled=false;
+    v.onpause=()=>{ if(running) v.play().catch(()=>{}); };          // browsers sometimes pause the element
+    stream.getVideoTracks()[0].addEventListener('ended',()=>{ if(running) stopCamera(); });
+    clearInterval(watchdog);
+    watchdog=setInterval(()=>{ if(running && v.paused) v.play().catch(()=>{}); },2000);
+    running=true; setStatus(cpuMode?'analyzing (CPU)':'analyzing','on');
+    requestAnimationFrame(loop);
+  }catch(err){
+    setStatus('camera error');
+    $('camMsg').style.display='flex';
+    $('camMsg').innerHTML=`<div style="font-size:34px">🚫</div><div><b>Camera failed:</b> ${err.message}<br><span style="font-size:11.5px">Camera needs HTTPS (or localhost) and permission granted.</span></div>`;
+  }
+}
+function stopCamera(){
+  running=false;
+  clearInterval(watchdog);
+  if(qmode.active) finishQuestion();
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+  $('btnCam').textContent='▶ Start Camera'; $('btnCam').classList.add('primary');
+  $('btnFlip').disabled=true; $('btnBase').disabled=true; $('btnAsk').disabled=true;
+  $('camMsg').style.display='flex'; $('emoBanner').style.display='none';
+  $('overlay').getContext('2d').clearRect(0,0,$('overlay').width,$('overlay').height);
+  setStatus('idle');
+}
+$('btnCam').onclick=()=>running?stopCamera():startCamera();
+$('btnFlip').onclick=async()=>{
+  facing=facing==='user'?'environment':'user';
+  $('videoWrap').classList.toggle('mirror',facing==='user');
+  stopCamera(); await startCamera();
+};
+
+function loop(){
+  if(!running) return;
+  const v=$('video');
+  if(!reinitializing && v.readyState>=2 && v.currentTime!==lastVideoTime){
+    lastVideoTime=v.currentTime;
+    try{
+      lastTs=Math.max(lastTs+1,performance.now());   // must be strictly increasing or MediaPipe throws
+      const res=faceLandmarker.detectForVideo(v,lastTs);
+      loopErrors=0;
+      const ctx=$('overlay').getContext('2d');
+      ctx.clearRect(0,0,$('overlay').width,$('overlay').height);
+      if(res.faceLandmarks && res.faceLandmarks.length){
+        const lm=res.faceLandmarks[0];
+        drawingUtils.drawConnectors(lm,FaceLandmarkerCls.FACE_LANDMARKS_FACE_OVAL,{color:'rgba(77,163,255,.45)',lineWidth:2});
+        drawingUtils.drawConnectors(lm,FaceLandmarkerCls.FACE_LANDMARKS_LEFT_EYE,{color:'rgba(124,92,255,.5)',lineWidth:1.5});
+        drawingUtils.drawConnectors(lm,FaceLandmarkerCls.FACE_LANDMARKS_RIGHT_EYE,{color:'rgba(124,92,255,.5)',lineWidth:1.5});
+        drawingUtils.drawConnectors(lm,FaceLandmarkerCls.FACE_LANDMARKS_LIPS,{color:'rgba(124,92,255,.5)',lineWidth:1.5});
+        const cats=res.faceBlendshapes?.[0]?.categories;
+        if(cats){
+          const b={}; cats.forEach(c=>b[c.categoryName]=c.score);
+          const raw=computeEmotions(b);
+          const now=performance.now();
+          for(const e of EMOTIONS) smooth[e.key]=smooth[e.key]*0.7+raw[e.key]*0.3;
+          trackCues(raw,b,now);
+          if(baselining) accumulateBaseline(b,raw,now);
+          if(qmode.active) qmodeSample(raw,b,now);
+          updateUI(raw,b);
+        }
+      }else{
+        $('emoName').textContent='No face'; $('emoEmoji').textContent='👤'; $('emoSub').textContent='';
+      }
+    }catch(err){
+      if(++loopErrors===1) console.warn('CueSight frame error:',err);
+      if(loopErrors>8) gpuFallback();
+    }
+  }
+  requestAnimationFrame(loop);   // always reschedule — the loop can no longer die on a bad frame
+}
+
+let uiTick=0;
+function updateUI(raw,b){
+  // bars (every frame, cheap)
+  for(const e of EMOTIONS){
+    const pct=Math.round(smooth[e.key]*100);
+    $('fill-'+e.key).style.width=pct+'%';
+    $('val-'+e.key).textContent=pct+'%';
+  }
+  // banner
+  const dk=dominantKey();
+  if(dk){const em=EMOTIONS.find(x=>x.key===dk);
+    $('emoName').textContent=em.label; $('emoEmoji').textContent=em.emoji;
+    $('emoSub').textContent=Math.round(smooth[dk]*100)+'% confidence';
+  }else{$('emoName').textContent='Neutral';$('emoEmoji').textContent='😐';$('emoSub').textContent='';}
+  // cue chips ~4×/sec
+  if(++uiTick%8) return;
+  const elapsed=blinkTimes.length?Math.min(60000,performance.now()-(blinkTimes[0]||0)):60000;
+  const bpm=Math.round(blinkTimes.length*60000/Math.max(elapsed,10000));
+  setCue('cueBlink',bpm||'—',baseline&&bpm>baseline.blink*1.6);
+  const gp=gazeSamples.length?Math.round(100*gazeSamples.filter(s=>s.off).length/gazeSamples.length):0;
+  setCue('cueGaze',gp+'%',baseline&&gp>baseline.gaze+25);
+  const lp=Math.round(lipEMA*100);
+  setCue('cueLip',lp+'%',lp>30);
+  // smile type
+  const sEl=$('cueSmile');
+  if(smooth.happiness>0.3){
+    const duch=raw._cheek>0.28;
+    sEl.querySelector('.v').textContent=duch?'Genuine':'Social';
+    sEl.querySelector('.s').textContent=duch?'eyes engaged (Duchenne)':'mouth only — eyes flat';
+    sEl.classList.toggle('alert',!duch);
+  }else{sEl.querySelector('.v').textContent='—';sEl.querySelector('.s').textContent='Duchenne check';sEl.classList.remove('alert');}
+  updateDeviation(bpm,gp);
+}
+function setCue(id,val,alert){
+  const el=$(id); el.querySelector('.v').textContent=val; el.classList.toggle('alert',!!alert);
+}
+
+/* ================== BASELINE ================== */
+$('btnBase').onclick=()=>{
+  if(baselining) return;
+  baselining=true; baseStart=performance.now();
+  baseAcc={blinks:0,gazeOff:0,gazeN:0,lip:0,lipN:0,pitch:[],blinkMark:blinkTimes.length};
+  $('btnBase').classList.add('rec');
+  const tick=setInterval(()=>{
+    const left=30-Math.floor((performance.now()-baseStart)/1000);
+    $('btnBase').textContent=`⏺ Baseline… ${left}s`;
+    if(left<=0){
+      clearInterval(tick); baselining=false;
+      baseline={
+        blink:Math.max(2,(blinkTimes.length-baseAcc.blinkMark)*2),  // per min
+        gaze:baseAcc.gazeN?Math.round(100*baseAcc.gazeOff/baseAcc.gazeN):0,
+        lip:baseAcc.lipN?baseAcc.lip/baseAcc.lipN:0,
+        pitch:median(baseAcc.pitch)||0,
+      };
+      $('btnBase').classList.remove('rec');
+      $('btnBase').textContent='✓ Re-capture Baseline';
+      $('baseHint').textContent=`baseline: ${baseline.blink} bpm · gaze ${baseline.gaze}% · pitch ${baseline.pitch?Math.round(baseline.pitch)+'Hz':'n/a'}`;
+    }
+  },1000);
+};
+function accumulateBaseline(b,raw,now){
+  const A=(...n)=>n.reduce((s,k)=>s+(b[k]||0),0)/n.length;
+  const off=Math.max(A('eyeLookUpLeft','eyeLookUpRight'),A('eyeLookDownLeft','eyeLookDownRight'),
+                     A('eyeLookOutLeft','eyeLookInRight'),A('eyeLookInLeft','eyeLookOutRight'));
+  baseAcc.gazeN++; if(off>0.45)baseAcc.gazeOff++;
+  baseAcc.lip+=Math.max(raw._press,raw._roll); baseAcc.lipN++;
+  if(voice.pitch>0) baseAcc.pitch.push(voice.pitch);
+}
+function updateDeviation(bpm,gp){
+  if(!baseline){$('devFill').style.width='0%';$('devVal').textContent='capture a baseline first';return;}
+  const C=v=>Math.max(0,Math.min(1,v));
+  let d=0;
+  d+=C((bpm-baseline.blink)/Math.max(baseline.blink,5))*0.28;
+  d+=C((gp-baseline.gaze)/50)*0.22;
+  d+=C((lipEMA-baseline.lip)*2.5)*0.25;
+  if(baseline.pitch&&voice.pitchMed) d+=C((voice.pitchMed/baseline.pitch-1)*4)*0.25;
+  const pct=Math.round(C(d)*100);
+  $('devFill').style.width=pct+'%';
+  $('devVal').textContent=pct+'% deviation';
+}
+function median(a){if(!a.length)return 0;const s=[...a].sort((x,y)=>x-y);return s[s.length>>1];}
+
+/* ================== VOICE ================== */
+const voice={on:false,ctx:null,analyser:null,buf:null,pitch:0,pitchMed:0,hist:[],
+  speaking:false,lastSpeech:0,pauseStart:0,speechMs:0,pauseMs:0,winStart:0};
+$('btnMic').onclick=async()=>{
+  if(voice.on){
+    voice.on=false; if(voice.ctx){voice.ctx.close();voice.ctx=null;}
+    if(voice.stream){voice.stream.getTracks().forEach(t=>t.stop());voice.stream=null;}
+    $('btnMic').textContent='🎙 Mic Off'; $('btnMic').classList.remove('on');
+    setCue('cuePitch','—');setCue('cueHes','—');
+    return;
+  }
+  try{
+    voice.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:false},video:false});
+    voice.ctx=new (window.AudioContext||window.webkitAudioContext)();
+    const src=voice.ctx.createMediaStreamSource(voice.stream);
+    voice.analyser=voice.ctx.createAnalyser();
+    voice.analyser.fftSize=2048;
+    src.connect(voice.analyser);
+    voice.buf=new Float32Array(2048);
+    voice.on=true; voice.winStart=performance.now(); voice.speechMs=0; voice.pauseMs=0;
+    $('btnMic').textContent='🎙 Mic On'; $('btnMic').classList.add('on');
+    voiceLoop();
+  }catch(err){ alert('Mic failed: '+err.message); }
+};
+function voiceLoop(){
+  if(!voice.on) return;
+  voice.analyser.getFloatTimeDomainData(voice.buf);
+  const sr=voice.ctx.sampleRate, buf=voice.buf, N=buf.length;
+  let rms=0; for(let i=0;i<N;i++) rms+=buf[i]*buf[i];
+  rms=Math.sqrt(rms/N);
+  const now=performance.now();
+  // voiced pitch via autocorrelation
+  voice.pitch=0;
+  if(rms>0.015){
+    let energy=0; for(let i=0;i<N;i++) energy+=buf[i]*buf[i];
+    const minLag=Math.floor(sr/380), maxLag=Math.floor(sr/70);
+    let best=0,bestLag=0;
+    for(let lag=minLag;lag<=maxLag;lag++){
+      let c=0; for(let i=0;i<N-lag;i++) c+=buf[i]*buf[i+lag];
+      if(c>best){best=c;bestLag=lag;}
+    }
+    if(bestLag && best/energy>0.3){
+      voice.pitch=sr/bestLag;
+      voice.hist.push({t:now,p:voice.pitch});
+    }
+  }
+  while(voice.hist.length && now-voice.hist[0].t>5000) voice.hist.shift();
+  voice.pitchMed=median(voice.hist.map(h=>h.p));
+  // hesitation: speech vs short pauses
+  const speakingNow=rms>0.015;
+  if(speakingNow){
+    if(!voice.speaking && voice.pauseStart && now-voice.pauseStart<3000 && now-voice.pauseStart>600)
+      voice.pauseMs+=now-voice.pauseStart;       // a hesitation pause inside a turn
+    voice.speaking=true; voice.lastSpeech=now; voice.speechMs+=100;
+  }else if(voice.speaking){ voice.speaking=false; voice.pauseStart=now; }
+  // question-window voice collection
+  if(qmode.active){
+    if(speakingNow){ if(qmode.latency===null) qmode.latency=now-qmode.start; qmode.speechMs+=100; }
+    else if(qmode.latency!==null) qmode.pauseMs+=100;
+    if(voice.pitch>0) qmode.pitch.push(voice.pitch);
+  }
+  // decay window every 60s
+  if(now-voice.winStart>60000){ voice.speechMs*=0.5; voice.pauseMs*=0.5; voice.winStart=now; }
+  // UI
+  const pEl=$('cuePitch');
+  if(voice.pitchMed){
+    let txt=Math.round(voice.pitchMed)+' Hz', alert=false;
+    if(baseline&&baseline.pitch){
+      const dpc=Math.round((voice.pitchMed/baseline.pitch-1)*100);
+      txt+=(dpc>=0?' (+':' (')+dpc+'%)'; alert=dpc>12;
+    }
+    setCue('cuePitch',txt,alert);
+  }
+  const total=voice.speechMs+voice.pauseMs;
+  if(total>3000) setCue('cueHes',Math.round(100*voice.pauseMs/total)+'%',voice.pauseMs/total>0.3);
+  setTimeout(voiceLoop,100);
+}
+
+/* ================== TRAINER ================== */
+const trainer={score:0,streak:0,total:0,correct:0,ms:250,target:null,await:false};
+document.querySelectorAll('.speedRow button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.speedRow button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); trainer.ms=+b.dataset.ms;
+});
+const ans=$('answerBtns');
+EMOTIONS.forEach(e=>{
+  const btn=document.createElement('button');
+  btn.textContent=e.emoji+' '+e.label; btn.disabled=true;
+  btn.onclick=()=>answer(e.key,btn);
+  ans.appendChild(btn);
+});
+$('btnTrain').onclick=startRound;
+function startRound(){
+  $('btnTrain').disabled=true; $('feedback').textContent='';
+  ans.querySelectorAll('button').forEach(b=>{b.disabled=true;b.className='';});
+  let next; do{ next=EMOTIONS[Math.random()*7|0].key; }while(next===trainer.target&&Math.random()<0.8);
+  trainer.target=next;
+  $('faceBox').innerHTML=svgFace('neutral');
+  setTimeout(()=>{
+    $('faceBox').innerHTML=svgFace(trainer.target);
+    setTimeout(()=>{
+      $('faceBox').innerHTML=svgFace('neutral');
+      trainer.await=true;
+      ans.querySelectorAll('button').forEach(b=>b.disabled=false);
+      $('feedback').textContent='What flashed?';
+    },trainer.ms);
+  },700+Math.random()*900);
+}
+function answer(key,btn){
+  if(!trainer.await) return;
+  trainer.await=false; trainer.total++;
+  ans.querySelectorAll('button').forEach(b=>b.disabled=true);
+  const em=EMOTIONS.find(x=>x.key===trainer.target);
+  if(key===trainer.target){
+    trainer.correct++; trainer.streak++; trainer.score+=trainer.ms<=120?3:trainer.ms<=250?2:1;
+    btn.classList.add('right');
+    $('feedback').innerHTML=`<b style="color:var(--good)">✓ Correct — ${em.label}</b><br>${FEATURES[trainer.target]}`;
+  }else{
+    trainer.streak=0; btn.classList.add('wrong');
+    $('feedback').innerHTML=`<b style="color:var(--bad)">✗ It was ${em.emoji} ${em.label}</b><br>${FEATURES[trainer.target]}`;
+  }
+  $('faceBox').innerHTML=svgFace(trainer.target);   // show it again, full
+  $('tScore').textContent=trainer.score;
+  $('tStreak').textContent=trainer.streak;
+  $('tAcc').textContent=Math.round(100*trainer.correct/trainer.total)+'%';
+  $('btnTrain').disabled=false; $('btnTrain').textContent='▶ Next Round';
+}
+
+/* ================== SVG FACES ================== */
+function svgFace(e){
+  // helpers: brows, eyes, mouth per emotion; viewBox 0 0 200 200
+  const skin='#e9bd88', line='#3a2c1e', white='#fff';
+  let brows='',eyes='',mouth='',extra='';
+  const eyeOpen=(cx,ry=7)=>`<ellipse cx="${cx}" cy="92" rx="13" ry="${ry}" fill="${white}" stroke="${line}" stroke-width="2.5"/><circle cx="${cx}" cy="92" r="5" fill="${line}"/>`;
+  switch(e){
+    case 'neutral':
+      brows=`<path d="M55 72 H89" stroke="${line}" stroke-width="5" stroke-linecap="round" fill="none"/><path d="M111 72 H145" stroke="${line}" stroke-width="5" stroke-linecap="round" fill="none"/>`;
+      eyes=eyeOpen(72)+eyeOpen(128);
+      mouth=`<path d="M78 142 H122" stroke="${line}" stroke-width="4.5" stroke-linecap="round" fill="none"/>`;
+      break;
+    case 'happiness':
+      brows=`<path d="M55 70 Q72 64 89 70" stroke="${line}" stroke-width="5" stroke-linecap="round" fill="none"/><path d="M111 70 Q128 64 145 70" stroke="${line}" stroke-width="5" stroke-linecap="round" fill="none"/>`;
+      eyes=`<path d="M60 92 Q72 84 84 92" stroke="${line}" stroke-width="4" fill="none" stroke-linecap="round"/><path d="M116 92 Q128 84 140 92" stroke="${line}" stroke-width="4" fill="none" stroke-linecap="round"/>`;
+      extra=`<path d="M50 88 l-7 -3 M50 94 l-8 0 M50 100 l-7 3 M150 88 l7 -3 M150 94 l8 0 M150 100 l7 3" stroke="${line}" stroke-width="1.8" opacity=".55"/>`;
+      mouth=`<path d="M70 132 Q100 162 130 132 Q100 146 70 132 Z" fill="#b8503c" stroke="${line}" stroke-width="3"/>`;
+      break;
+    case 'sadness':
+      brows=`<path d="M58 78 Q75 68 90 73" stroke="${line}" stroke-width="5" stroke-linecap="round" fill="none"/><path d="M110 73 Q125 68 142 78" stroke="${line}" stroke-width="5" stroke-linecap="round" fill="none"/>`;
+      eyes=eyeOpen(72,5.5)+eyeOpen(128,5.5)+`<path d="M59 86 Q72 82 85 86 M115 86 Q128 82 141 86" stroke="${line}" stroke-width="2" fill="none" opacity=".6"/>`;
+      mouth=`<path d="M78 148 Q100 134 122 148" stroke="${line}" stroke-width="4.5" stroke-linecap="round" fill="none"/>`;
+      break;
+    case 'anger':
+      brows=`<path d="M56 66 L90 78" stroke="${line}" stroke-width="6" stroke-linecap="round"/><path d="M144 66 L110 78" stroke="${line}" stroke-width="6" stroke-linecap="round"/>`;
+      extra=`<path d="M96 70 v16 M104 70 v16" stroke="${line}" stroke-width="1.6" opacity=".5"/>`;
+      eyes=`<ellipse cx="72" cy="94" rx="12" ry="5" fill="${white}" stroke="${line}" stroke-width="2.5"/><circle cx="72" cy="94" r="4.5" fill="${line}"/><ellipse cx="128" cy="94" rx="12" ry="5" fill="${white}" stroke="${line}" stroke-width="2.5"/><circle cx="128" cy="94" r="4.5" fill="${line}"/>`;
+      mouth=`<path d="M76 144 H124" stroke="${line}" stroke-width="7" stroke-linecap="round"/>`;
+      break;
+    case 'fear':
+      brows=`<path d="M56 62 H90" stroke="${line}" stroke-width="5" stroke-linecap="round"/><path d="M110 62 H144" stroke="${line}" stroke-width="5" stroke-linecap="round"/>`;
+      eyes=`<ellipse cx="72" cy="92" rx="14" ry="11" fill="${white}" stroke="${line}" stroke-width="2.5"/><circle cx="72" cy="93" r="5" fill="${line}"/><ellipse cx="128" cy="92" rx="14" ry="11" fill="${white}" stroke="${line}" stroke-width="2.5"/><circle cx="128" cy="93" r="5" fill="${line}"/>`;
+      mouth=`<path d="M70 142 Q100 138 130 142 Q100 152 70 142 Z" fill="#8a4438" stroke="${line}" stroke-width="3"/>`;
+      break;
+    case 'surprise':
+      brows=`<path d="M55 60 Q72 50 89 60" stroke="${line}" stroke-width="5" stroke-linecap="round" fill="none"/><path d="M111 60 Q128 50 145 60" stroke="${line}" stroke-width="5" stroke-linecap="round" fill="none"/>`;
+      eyes=`<circle cx="72" cy="92" r="13" fill="${white}" stroke="${line}" stroke-width="2.5"/><circle cx="72" cy="92" r="5" fill="${line}"/><circle cx="128" cy="92" r="13" fill="${white}" stroke="${line}" stroke-width="2.5"/><circle cx="128" cy="92" r="5" fill="${line}"/>`;
+      mouth=`<ellipse cx="100" cy="146" rx="14" ry="19" fill="#6e362c" stroke="${line}" stroke-width="3"/>`;
+      break;
+    case 'disgust':
+      brows=`<path d="M58 74 L90 78" stroke="${line}" stroke-width="5" stroke-linecap="round"/><path d="M142 74 L110 78" stroke="${line}" stroke-width="5" stroke-linecap="round"/>`;
+      eyes=`<ellipse cx="72" cy="93" rx="12" ry="5.5" fill="${white}" stroke="${line}" stroke-width="2.5"/><circle cx="72" cy="93" r="4.5" fill="${line}"/><ellipse cx="128" cy="93" rx="12" ry="5.5" fill="${white}" stroke="${line}" stroke-width="2.5"/><circle cx="128" cy="93" r="4.5" fill="${line}"/>`;
+      extra=`<path d="M92 108 q-4 4 -2 9 M108 108 q4 4 2 9 M95 104 q5 -3 10 0" stroke="${line}" stroke-width="2" fill="none" opacity=".7"/>`;
+      mouth=`<path d="M76 144 Q100 134 124 144 M82 138 Q100 130 118 138" stroke="${line}" stroke-width="4" stroke-linecap="round" fill="none"/>`;
+      break;
+    case 'contempt':
+      brows=`<path d="M55 72 H89" stroke="${line}" stroke-width="5" stroke-linecap="round"/><path d="M111 70 H145" stroke="${line}" stroke-width="5" stroke-linecap="round"/>`;
+      eyes=eyeOpen(72,6)+eyeOpen(128,6);
+      mouth=`<path d="M78 144 Q100 144 118 136 Q124 133 126 130" stroke="${line}" stroke-width="5" stroke-linecap="round" fill="none"/>`;
+      extra=`<path d="M118 130 q6 -2 8 -6" stroke="${line}" stroke-width="2" opacity=".5" fill="none"/>`;
+      break;
+  }
+  return `<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="100" cy="104" r="84" fill="${skin}" stroke="#c79b66" stroke-width="3"/>
+    <path d="M96 96 q-3 12 0 20 q2 5 7 5" stroke="#c79b66" stroke-width="2.5" fill="none"/>
+    ${extra}${brows}${eyes}${mouth}</svg>`;
+}
+
+/* ================== LEARN CARDS ================== */
+const lc=$('learnCards');
+EMOTIONS.forEach(e=>{
+  lc.insertAdjacentHTML('beforeend',`<details>
+    <summary>${e.emoji} ${e.label}<span class="chev">›</span></summary>
+    <div class="dbody"><div class="learnFace">${svgFace(e.key)}</div><p>${FEATURES[e.key]}</p>${
+      e.key==='fear'?'<p><b>Fear vs. surprise:</b> fear = flat brows + lips stretched sideways; surprise = curved brows + jaw dropped open.</p>':
+      e.key==='contempt'?'<p><b>Contempt vs. disgust:</b> contempt is asymmetric (one side) and aimed at people; disgust is symmetric and nose-driven.</p>':''
+    }<div style="clear:both"></div></div></details>`);
+});
+
+/* ================== PWA ================== */
+if('serviceWorker' in navigator && location.protocol==='https:')
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+renderFlashes();
+</script>
+</body>
+</html>
