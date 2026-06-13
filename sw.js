@@ -1,6 +1,6 @@
 /* CueSight service worker — caches the app shell and the ML model/wasm at runtime */
-const CACHE = 'cuesight-v5';
-const SHELL = ['./index.html', './manifest.json'];
+const CACHE = 'cuesight-v6';
+const SHELL = ['./index.html', './manifest.json', './icon-192.png', './icon-512.png', './icon-512-maskable.png', './apple-touch-icon.png', './privacy.html'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
