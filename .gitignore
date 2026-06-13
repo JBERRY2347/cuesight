@@ -1,0 +1,6 @@
+# Signing keys and built packages — never commit (public repo)
+*.zip
+*.keystore
+*.aab
+*.apk
+signing-key-info.txt
