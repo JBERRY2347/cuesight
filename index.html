@@ -127,7 +127,15 @@ details[open] summary .chev{transform:rotate(90deg)}
 .tag.myth{background:rgba(255,92,122,.15);color:var(--bad)}
 .tag.works{background:rgba(61,220,132,.15);color:var(--good)}
 footer{position:fixed;bottom:0;left:0;right:0;background:rgba(13,18,32,.95);border-top:1px solid var(--border);padding:7px 14px;font-size:10.5px;color:var(--dim);text-align:center;z-index:50;backdrop-filter:blur(6px)}
-@media(max-width:430px){.answers{grid-template-columns:repeat(2,1fr)}.cues{grid-template-columns:repeat(2,1fr)}}
+/* floating mini camera (picture-in-picture) */
+.miniCam{position:fixed;right:12px;bottom:80px;width:124px;z-index:60;border-radius:14px;overflow:hidden;border:2px solid var(--accent);box-shadow:0 8px 26px rgba(0,0,0,.55);background:#000;cursor:grab;touch-action:none;user-select:none}
+.miniCam:active{cursor:grabbing}
+.miniCam[hidden]{display:none}
+.miniCam canvas{display:block;width:100%;height:auto;pointer-events:none}
+.miniBadge{position:absolute;top:4px;left:4px;font-size:17px;background:rgba(0,0,0,.5);border-radius:8px;padding:0 4px;line-height:1.5;pointer-events:none}
+.miniClose{position:absolute;top:3px;right:3px;width:21px;height:21px;border:none;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;font-size:12px;line-height:21px;text-align:center;cursor:pointer;padding:0}
+.miniHint{position:absolute;bottom:0;left:0;right:0;font-size:9px;font-weight:600;text-align:center;background:rgba(0,0,0,.55);padding:2px 0;letter-spacing:.3px;pointer-events:none}
+@media(max-width:430px){.answers{grid-template-columns:repeat(2,1fr)}.cues{grid-template-columns:repeat(2,1fr)}main{padding:10px 10px 84px}.card{padding:12px}.miniCam{width:108px;bottom:74px}}
 </style>
 </head>
 <body>
@@ -314,6 +322,13 @@ footer{position:fixed;bottom:0;left:0;right:0;background:rgba(13,18,32,.95);bord
 
 <footer>On-device analysis only · Not a lie detector · Expressions ≠ truth · Get consent before recording</footer>
 
+<div id="miniCam" class="miniCam" hidden>
+  <canvas id="miniCanvas" width="180" height="135"></canvas>
+  <div class="miniBadge" id="miniBadge">😐</div>
+  <button class="miniClose" id="miniClose" aria-label="Hide mini camera">✕</button>
+  <div class="miniHint" id="miniHint">tap to return</div>
+</div>
+
 <script type="module">
 /* ================== STATE ================== */
 const $=id=>document.getElementById(id);
@@ -347,7 +362,76 @@ function setStatus(txt,mode){ $('statusTxt').textContent=txt; $('statusDot').cla
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.id==='tab-'+b.dataset.tab));
+  reevalMini();
 });
+
+/* ================== FLOATING MINI CAMERA ================== */
+let miniVisible=false, miniDismissed=false, lastMiniState='';
+const miniCam=$('miniCam');
+function setMini(show){
+  show = show && running && !miniDismissed;
+  if(show===miniVisible) return;
+  miniVisible=show; miniCam.hidden=!show;
+}
+function reevalMini(){          // show the floater whenever the main camera card isn't comfortably on screen
+  if(!running){ setMini(false); return; }
+  const liveActive=$('tab-live').classList.contains('active');
+  const r=$('videoWrap').getBoundingClientRect();
+  const onScreen = liveActive && r.bottom>90 && r.top < (window.innerHeight-90);
+  setMini(!onScreen);
+}
+// IntersectionObserver handles scrolling within the Live tab efficiently
+new IntersectionObserver(es=>{ if(running) setMini(!es[0].isIntersecting); },{threshold:0.4})
+  .observe($('videoWrap'));
+window.addEventListener('scroll',()=>{ /* IO covers most; reeval as a safety net */ if(running) reevalMini(); },{passive:true});
+
+function drawMini(lm){
+  if(!miniVisible) return;
+  const v=$('video'); if(!v.videoWidth) return;
+  const cv=$('miniCanvas'), c=cv.getContext('2d'), W=cv.width, H=cv.height;
+  if(facing==='user'){ c.save(); c.translate(W,0); c.scale(-1,1); c.drawImage(v,0,0,W,H); c.restore(); }
+  else c.drawImage(v,0,0,W,H);
+  let color='#ff5c7a', state='no face';
+  if(lm && lm.length){
+    const nx=lm[1].x, ny=lm[1].y;                       // landmark 1 ≈ nose tip
+    const off=Math.max(Math.abs(nx-0.5),Math.abs(ny-0.5));
+    if(off<0.16){ color='#3ddc84'; state='centered ✓'; }
+    else if(off<0.30){ color='#ffb347'; state='almost — recenter'; }
+    else { color='#ff5c7a'; state='move to center'; }
+    const fx=(facing==='user'?(1-nx):nx)*W, fy=ny*H;
+    c.beginPath(); c.arc(fx,fy,4,0,7); c.fillStyle=color; c.fill();
+  }
+  c.strokeStyle=color; c.lineWidth=2;
+  c.beginPath(); c.arc(W/2,H/2,Math.min(W,H)*0.30,0,7); c.stroke();
+  c.beginPath(); c.moveTo(W/2-7,H/2); c.lineTo(W/2+7,H/2); c.moveTo(W/2,H/2-7); c.lineTo(W/2,H/2+7); c.stroke();
+  if(state!==lastMiniState){ lastMiniState=state; const h=$('miniHint'); h.textContent=state; h.style.color=color; }
+}
+function returnToCam(){
+  document.querySelector('nav button[data-tab="live"]').click();
+  $('videoWrap').scrollIntoView({behavior:'smooth',block:'start'});
+}
+// drag + tap-to-return
+let mdrag=null;
+miniCam.addEventListener('pointerdown',e=>{
+  if(e.target===$('miniClose')) return;
+  mdrag={sx:e.clientX,sy:e.clientY,ol:miniCam.offsetLeft,ot:miniCam.offsetTop,moved:false};
+  miniCam.setPointerCapture(e.pointerId);
+});
+miniCam.addEventListener('pointermove',e=>{
+  if(!mdrag) return;
+  const dx=e.clientX-mdrag.sx, dy=e.clientY-mdrag.sy;
+  if(Math.abs(dx)>5||Math.abs(dy)>5) mdrag.moved=true;
+  const nl=Math.max(6,Math.min(window.innerWidth-miniCam.offsetWidth-6,mdrag.ol+dx));
+  const nt=Math.max(6,Math.min(window.innerHeight-miniCam.offsetHeight-6,mdrag.ot+dy));
+  miniCam.style.left=nl+'px'; miniCam.style.top=nt+'px';
+  miniCam.style.right='auto'; miniCam.style.bottom='auto';
+});
+miniCam.addEventListener('pointerup',e=>{
+  if(!mdrag) return;
+  const moved=mdrag.moved; mdrag=null;
+  if(!moved) returnToCam();
+});
+$('miniClose').onclick=e=>{ e.stopPropagation(); miniDismissed=true; setMini(false); };
 
 /* ================== EMOTION BARS ================== */
 const ebars=$('ebars');
@@ -852,6 +936,7 @@ async function startCamera(){
     clearInterval(watchdog);
     watchdog=setInterval(()=>{ if(running && v.paused) v.play().catch(()=>{}); },2000);
     running=true; setStatus(cpuMode?'analyzing (CPU)':'analyzing','on');
+    miniDismissed=false; reevalMini();
     requestAnimationFrame(loop);
   }catch(err){
     setStatus('camera error');
@@ -869,6 +954,7 @@ function stopCamera(){
   $('btnFlip').disabled=true; $('btnBase').disabled=true; $('btnAsk').disabled=true; $('btnCal').disabled=true;
   $('camMsg').style.display='flex'; $('emoBanner').style.display='none';
   $('overlay').getContext('2d').clearRect(0,0,$('overlay').width,$('overlay').height);
+  setMini(false); miniDismissed=false;
   setStatus('idle');
 }
 $('btnCam').onclick=()=>running?stopCamera():startCamera();
@@ -889,8 +975,9 @@ function loop(){
       loopErrors=0;
       const ctx=$('overlay').getContext('2d');
       ctx.clearRect(0,0,$('overlay').width,$('overlay').height);
+      let curLm=null;
       if(res.faceLandmarks && res.faceLandmarks.length){
-        const lm=res.faceLandmarks[0];
+        curLm=res.faceLandmarks[0]; const lm=curLm;
         drawingUtils.drawConnectors(lm,FaceLandmarkerCls.FACE_LANDMARKS_FACE_OVAL,{color:'rgba(77,163,255,.45)',lineWidth:2});
         drawingUtils.drawConnectors(lm,FaceLandmarkerCls.FACE_LANDMARKS_LEFT_EYE,{color:'rgba(124,92,255,.5)',lineWidth:1.5});
         drawingUtils.drawConnectors(lm,FaceLandmarkerCls.FACE_LANDMARKS_RIGHT_EYE,{color:'rgba(124,92,255,.5)',lineWidth:1.5});
@@ -907,7 +994,9 @@ function loop(){
         }
       }else{
         $('emoName').textContent='No face'; $('emoEmoji').textContent='👤'; $('emoSub').textContent='';
+        $('miniBadge').textContent='👤';
       }
+      drawMini(curLm);
     }catch(err){
       if(++loopErrors===1) console.warn('CueSight frame error:',err);
       if(loopErrors>8) gpuFallback();
@@ -929,7 +1018,8 @@ function updateUI(raw,b){
   if(dk){const em=EMOTIONS.find(x=>x.key===dk);
     $('emoName').textContent=em.label; $('emoEmoji').textContent=em.emoji;
     $('emoSub').textContent=Math.round(smooth[dk]*100)+'% confidence';
-  }else{$('emoName').textContent='Neutral';$('emoEmoji').textContent='😐';$('emoSub').textContent='';}
+    $('miniBadge').textContent=em.emoji;
+  }else{$('emoName').textContent='Neutral';$('emoEmoji').textContent='😐';$('emoSub').textContent='';$('miniBadge').textContent='😐';}
   // cue chips ~4×/sec
   if(++uiTick%8) return;
   const elapsed=blinkTimes.length?Math.min(60000,performance.now()-(blinkTimes[0]||0)):60000;
